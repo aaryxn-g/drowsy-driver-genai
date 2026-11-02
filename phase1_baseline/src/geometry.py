@@ -129,6 +129,35 @@ def head_pose(pts: np.ndarray, width: int, height: int) -> tuple[float, float, f
     return rotation_to_euler(rmat)
 
 
+def centered_head_pose(pts: np.ndarray, width: int, height: int) -> tuple[float, float, float]:
+    """Head pose with the landmarks shifted so the nose tip is at the image centre.
+
+    This removes the part of the pose estimate that comes only from where the face
+    sits in the image, as in a crop or a re-aimed camera. It is not a general fix
+    for movement. A head that moves through space without rotating looks different
+    off-axis, and that difference survives the shift: there, the raw pose is the
+    steadier of the two. See tests/test_framing.py.
+    """
+    shift = np.array([width / 2.0, height / 2.0]) - pts[config.NOSE_TIP][:2]
+    centered = pts.copy()
+    centered[:, :2] += shift
+    return head_pose(centered, width, height)
+
+
+def framing(pts: np.ndarray, width: int, height: int) -> dict[str, float]:
+    """Where the face sits in the frame, as fractions of the frame size.
+
+    Not clipped: a nose outside the frame reads outside [0, 1], which is true.
+    """
+    nose = pts[config.NOSE_TIP]
+    a, b = config.EYE_OUTER_CORNERS
+    return {
+        "nose_x_norm": float(nose[0] / width),
+        "nose_y_norm": float(nose[1] / height),
+        "face_scale": _dist(pts[a], pts[b]) / width,
+    }
+
+
 def ear_pose_correction(ear: float, yaw_deg: float, max_yaw: float = 45.0) -> float:
     """Undo the EAR inflation caused by horizontal foreshortening.
 
@@ -150,6 +179,7 @@ def frame_features(pts: np.ndarray, width: int, height: int) -> dict[str, float]
     """All per-frame geometry for one detected face."""
     left, right, mean = both_eyes_ear(pts)
     yaw, pitch, roll = head_pose(pts, width, height)
+    yaw_centered, pitch_centered, _ = centered_head_pose(pts, width, height)
     return {
         "ear_left": left,
         "ear_right": right,
@@ -159,4 +189,7 @@ def frame_features(pts: np.ndarray, width: int, height: int) -> dict[str, float]
         "yaw": yaw,
         "pitch": pitch,
         "roll": roll,
+        "pitch_centered": pitch_centered,
+        "yaw_centered": yaw_centered,
+        **framing(pts, width, height),
     }

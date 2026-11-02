@@ -85,6 +85,62 @@ def build_baselines(
     return baselines, problems
 
 
+def _p95_minus_p5(values: np.ndarray) -> float:
+    finite = values[np.isfinite(values)]
+    if not finite.size:
+        return float("nan")
+    return float(np.percentile(finite, 95) - np.percentile(finite, 5))
+
+
+def pearson(x: np.ndarray, y: np.ndarray) -> float:
+    """Pearson r over frames where both are finite. NaN if either does not vary."""
+    keep = np.isfinite(x) & np.isfinite(y)
+    if keep.sum() < 3 or np.ptp(x[keep]) == 0 or np.ptp(y[keep]) == 0:
+        return float("nan")
+    return float(np.corrcoef(x[keep], y[keep])[0, 1])
+
+
+def is_pitch_confounded(corr: float, nose_y_drift: float) -> bool:
+    """Whether apparent nodding MAY be movement in the frame.
+
+    This cannot tell a slump from a real head drop, since both move pitch and
+    nose position together. False when either input is NaN: an unmeasurable video
+    is not a flagged one.
+    """
+    return bool(abs(corr) > config.PITCH_CONFOUND_MIN_CORR
+                and nose_y_drift > config.PITCH_CONFOUND_MIN_DRIFT)
+
+
+def framing_features(df: pd.DataFrame) -> dict[str, float | bool]:
+    """How much the subject moved in the frame, and whether pitch moved with them."""
+    pitch = df["pitch"].to_numpy(dtype=float)
+    centered = df["pitch_centered"].to_numpy(dtype=float)
+    nose_y = df["nose_y_norm"].to_numpy(dtype=float)
+
+    corr = pearson(pitch, nose_y)
+    nose_y_drift = _p95_minus_p5(nose_y)
+    has_centered = np.isfinite(centered).any()
+    return {
+        "nose_y_drift": nose_y_drift,
+        "nose_x_drift": _p95_minus_p5(df["nose_x_norm"].to_numpy(dtype=float)),
+        "face_scale_drift": _p95_minus_p5(df["face_scale"].to_numpy(dtype=float)),
+        "pitch_nose_y_corr": corr,
+        "pitch_centered_std": float(np.nanstd(centered)) if has_centered else float("nan"),
+        "pitch_centered_range": (
+            float(np.nanmax(centered) - np.nanmin(centered)) if has_centered else float("nan")
+        ),
+        "pitch_confounded": is_pitch_confounded(corr, nose_y_drift),
+    }
+
+
+def confounded_by_class(features: pd.DataFrame) -> pd.DataFrame:
+    """Share of videos flagged pitch_confounded, per class, in class order."""
+    present = [c for c in config.CLASS_ORDER if c in set(features["class"])]
+    table = features.groupby("class")["pitch_confounded"].agg(["sum", "count", "mean"])
+    return table.reindex(present).rename(
+        columns={"sum": "confounded", "count": "videos", "mean": "fraction"})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Aggregate per-frame features into per-video drowsiness features."
@@ -133,6 +189,7 @@ def main() -> int:
             fps,
             baseline,
         )
+        summary.update(framing_features(df))
         summary.update({
             "video_id": row["video_id"],
             "subject_id": subject,
@@ -153,16 +210,20 @@ def main() -> int:
     out = pd.DataFrame(rows)
     lead = ["video_id", "subject_id", "fold", "class"]
     out = out[lead + [c for c in out.columns if c not in lead]]
+    for k, name in enumerate(("pitch_centered_std", "pitch_centered_range")):
+        out.insert(out.columns.get_loc("pitch_range") + 1 + k, name, out.pop(name))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
     pd.DataFrame(event_rows).to_csv(args.events_out, index=False)
 
+    confounded = confounded_by_class(out)
     meta = {
         "n_videos": len(out),
         "n_subjects": int(out["subject_id"].nunique()),
         "ear_column": "ear_corrected" if use_corrected else "ear",
         "baseline_problems": problems,
         "videos_without_features": missing,
+        "pitch_confounded_by_class": confounded.to_dict("index"),
     }
     args.out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
 
@@ -177,6 +238,10 @@ def main() -> int:
                 "mean_reopening_speed", "detection_rate"]
         print("\nmean by class (sanity check: PERCLOS should rise left to right)")
         print(out.groupby("class")[cols].mean().reindex(present).round(3).to_string())
+
+    print("\npitch_confounded videos by class (pitch moves with vertical position; a "
+          "slump or a real head drop)")
+    print(confounded.round(3).to_string())
     return 0
 
 

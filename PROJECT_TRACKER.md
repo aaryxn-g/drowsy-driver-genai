@@ -28,9 +28,10 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [x] 1.1 Per-frame geometry: EAR, MAR, head pose via solvePnP, yaw correction — `phase1_baseline/src/geometry.py`
 - [x] 1.1 Blink/PERCLOS layer: per-subject baselines, closure events, rolling PERCLOS — `phase1_baseline/src/blinks.py`
 - [x] 1.1 Two-pass CLI (`extract` → `aggregate`), resumable, NaN-safe — `phase1_baseline/src/`
-- [x] 1.1 Test suite: 120 tests, geometry vs synthetic projections, ITA vs hand-computed values, pipeline end to end with a stub landmarker
+- [x] 1.1 Test suite: 146 tests, geometry vs synthetic projections, ITA vs hand-computed values, pipeline end to end with a stub landmarker
 - [x] 1.1 Subgroup annotation tool: reference frames, ITA, pre-filled and blind sheets (no real data run yet) — `phase1_baseline/src/subgroups.py`
 - [x] 1.1 Head-pose axis fix: pose model now matches OpenCV's Y-down camera frame, positive pitch = nodding down — `phase1_baseline/src/config.py`
+- [x] 1.1 Framing confound surfaced: face position per frame, centred pose, drift features and `pitch_confounded` — `phase1_baseline/src/aggregate.py`
 - [x] 1.1 Server env: MediaPipe loads on the tasks backend after `apt-get install libegl1 libgles2`
 - [ ] 1.1 **Self-check run on one real video** (`python -m src.selfcheck --video ...`) ← first thing to do once data lands
 - [ ] 1.1 Full extraction run over all 180 videos
@@ -105,6 +106,7 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 | 2026-11-02 | Pose model switched to OpenCV's Y-down camera frame; positive pitch = nodding down | The Y-up model put a frontal pitch near the ±180 wrap, which corrupts `pitch_std` and `pitch_range`. See `tests/test_geometry.py::TestHeadPoseConvention`, which starts from image coordinates because the roundtrip tests cancel the error | Y-down model |
 | 2026-11-02 | ITA clipping: unreliable above `clipped_fraction` 0.02, with the median over non-clipped pixels | "Any channel at 0 or 255" tripped on 0.03% of pixels at a 0.37° spread in a smoke test. 0.02 is not yet checked on UTA-RLDD. See `data/subgroup_annotation_protocol.md` | 2% threshold |
 | 2026-11-02 | Cohen's κ on age, gender presentation and glasses only; ITA gets a blind human spot-check | ITA is computed, so κ against it is not κ. The spot-check is reported as ITA-to-human agreement, never as inter-annotator reliability. See `data/subgroup_annotation_protocol.md` | κ on 3 attributes + spot-check |
+| 2026-11-02 | Absolute pitch is not used; raw and centred pitch are both kept until real data decides. **Phase 6 limitation** | Absolute pitch from an uncalibrated camera is not meaningful. Only change within a video is, and even that is confounded by framing drift unless checked. Not fully solvable without camera calibration. Neither pitch is drift-proof, and `pitch_confounded` also fires on large real nods. See `tests/test_framing.py` and `phase1_baseline/README.md` | Both, undecided |
 
 ## Blockers / Open Questions
 - **UTA-RLDD not yet downloaded.** 111.3 GB across 10 zips, direct from Google Drive, no form needed. Phase 1.1 code is written and tested but cannot run until this lands. Download one fold first and run the self-check on a single video before pulling the rest.

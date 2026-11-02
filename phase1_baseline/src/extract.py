@@ -32,6 +32,8 @@ FEATURE_COLUMNS = [
     "frame", "t_s", "detected",
     "ear_left", "ear_right", "ear", "ear_corrected",
     "mar", "yaw", "pitch", "roll",
+    "pitch_centered", "yaw_centered",
+    "nose_x_norm", "nose_y_norm", "face_scale",
 ]
 
 

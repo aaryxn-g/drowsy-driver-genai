@@ -29,7 +29,7 @@ Read phase1_baseline/README.md and phase1_baseline/src/selfcheck.py.
 I have just downloaded the first fold of UTA-RLDD to <PATH>. Do this in order:
 
 1. Create the conda env from phase1_baseline/requirements.txt (python 3.11) and run
-   `python -m pytest tests -q` from inside phase1_baseline. I expect 120 passed. If any
+   `python -m pytest tests -q` from inside phase1_baseline. I expect 146 passed. If any
    fail, stop and show me the failure before doing anything else.
 2. Run `python -m src.manifest --root "<PATH>" --out data/manifest.csv` and show me the
    summary it prints plus the first 5 rows. Tell me whether the discovered structure

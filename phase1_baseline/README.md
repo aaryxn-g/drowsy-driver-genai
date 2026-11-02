@@ -27,7 +27,7 @@ ship 3.13 wheels on Windows.
 python -m pytest tests -q
 ```
 
-120 tests. They cover the geometry against hand-computed values and against
+146 tests. They cover the geometry against hand-computed values and against
 synthetically projected faces at known head angles, the blink and PERCLOS logic
 against series with known ground truth, and both pipeline passes end to end with
 a stub landmarker. They do not need any dataset.
@@ -166,7 +166,7 @@ scored on a guess.
 data/
   manifest.csv                 subject, fold, class, path per video
   manifest_unclassified.csv    anything the scanner refused to label
-  frames/<video_id>.parquet    per-frame EAR, MAR, yaw, pitch, roll, detected
+  frames/<video_id>.parquet    per-frame EAR, MAR, raw and centred pose, face position, detected
   frames/_extraction_log.csv   fps, detection rate, runtime per video
   video_features.csv           per-video features, the Phase 1.2 model input
   closure_events.csv           every blink and closure with duration and speeds
@@ -180,9 +180,39 @@ mean closing and reopening speed, long-closure and microsleep counts, total
 closure time, MAR mean and 95th percentile, yawn frame fraction, head-pitch
 standard deviation and range, plus `detection_rate` and a `low_quality` flag.
 
-Positive head pitch means nodding down. Read pitch as change within a video, not
-as an absolute angle: the camera is uncalibrated, and a frontal face can read
-well away from 0 depending on where it sits in the frame.
+Framing columns: `pitch_centered_std`, `pitch_centered_range`, `nose_y_drift`,
+`nose_x_drift`, `face_scale_drift`, `pitch_nose_y_corr` and `pitch_confounded`. See
+"Head pitch and framing" below.
+
+---
+
+## Head pitch and framing
+
+Positive pitch means nodding down.
+
+**Absolute pitch from an uncalibrated camera is not meaningful.** Only change within
+a video is, and even that is confounded by framing drift unless checked. A subject
+slumping down the frame over ten minutes can look like a head nod, and because
+slumping goes with drowsiness, the feature could look predictive while measuring the
+wrong thing. This is a limitation for the Phase 6 write-up. It cannot be fully solved
+without camera calibration.
+
+Both pitches are kept, and the choice between them waits for real data:
+
+| Column | Holds up when | Goes wrong when |
+|---|---|---|
+| `pitch` | the head moves through space without rotating | the face stays aimed at the camera while moving in the frame |
+| `pitch_centered` | the image shifts but the face looks the same (a crop, or a face kept aimed at the camera) | the head moves through space without rotating, the plain slump |
+
+So `pitch_centered` is not a slump-proof version of `pitch`.
+`tests/test_framing.py` pins both cases.
+
+`pitch_confounded` is True when `abs(pitch_nose_y_corr) > 0.5` and `nose_y_drift > 0.1`.
+It means the apparent nodding *may* be movement in the frame, not that it is. A real
+nod pivots at the neck and moves the nose down the frame as well, so large real nods
+trip the flag too, and more flagged drowsy videos than alert ones can mean either
+thing. Both limits are starting values, not yet checked on UTA-RLDD. The aggregate run
+prints the flagged fraction per class.
 
 ---
 

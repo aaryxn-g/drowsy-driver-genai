@@ -40,6 +40,17 @@ POSE_MODEL_3D = (
     (150.0, 150.0, 125.0),     # 291 left mouth corner
 )
 
+# ------------------------------------------------------------- framing
+NOSE_TIP = 1
+EYE_OUTER_CORNERS = (33, 263)
+
+# A video is flagged when pitch moves with vertical position in the frame and the
+# subject actually moved. Both limits are starting points, not validated values.
+# A flagged video is not proven to be an artifact: a real head nod also moves the
+# nose down the frame, so large real nods trip this too.
+PITCH_CONFOUND_MIN_CORR = 0.5
+PITCH_CONFOUND_MIN_DRIFT = 0.1
+
 # --------------------------------------------------------------- eye-openness
 # Openness is EAR rescaled to [0, 1] against a per-subject baseline, so that
 # thresholds mean the same thing for a wide-eyed and a narrow-eyed driver.

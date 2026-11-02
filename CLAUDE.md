@@ -56,7 +56,7 @@ in `phase1_baseline/README.md`.
 | `selfcheck.py` | validates the landmarker on one real video |
 | `subgroups.py` | reference frames, ITA and annotation sheets; never guesses human labels |
 
-`python -m pytest tests -q` from `phase1_baseline/` should report **120 passed**. If it does
+`python -m pytest tests -q` from `phase1_baseline/` should report **146 passed**. If it does
 not, fix that before anything else.
 
 ## Invariants that must not be broken
