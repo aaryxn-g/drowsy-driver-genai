@@ -1,0 +1,19 @@
+torch>=2.2
+torchvision>=0.17
+opencv-python>=4.9
+mediapipe>=0.10
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+timm>=0.9          # pretrained ViT/Swin/EfficientNet backbones
+pytorchvideo>=0.1.5 # optional: video-native transforms/dataloaders
+ultralytics>=8.2    # YOLOv8 backbone option
+tqdm
+pyyaml
+scipy
+
+# --- added for the 1.1 feature-extraction pipeline ---
+pyarrow>=15.0      # Parquet writer for the per-frame tables
+pytest>=8.0        # the pipeline ships with 54 tests; run them before trusting it
