@@ -16,4 +16,4 @@ scipy
 
 # --- added for the 1.1 feature-extraction pipeline ---
 pyarrow>=15.0      # Parquet writer for the per-frame tables
-pytest>=8.0        # the pipeline ships with 54 tests; run them before trusting it
+pytest>=8.0        # the pipeline ships with 120 tests; run them before trusting it

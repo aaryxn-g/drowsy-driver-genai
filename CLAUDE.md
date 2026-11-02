@@ -54,8 +54,9 @@ in `phase1_baseline/README.md`.
 | `extract.py` | pass 1, video to per-frame parquet, resumable |
 | `aggregate.py` | pass 2, per-frame to per-video features |
 | `selfcheck.py` | validates the landmarker on one real video |
+| `subgroups.py` | reference frames, ITA and annotation sheets; never guesses human labels |
 
-`python -m pytest tests -q` from `phase1_baseline/` should report **54 passed**. If it does
+`python -m pytest tests -q` from `phase1_baseline/` should report **120 passed**. If it does
 not, fix that before anything else.
 
 ## Invariants that must not be broken
@@ -121,5 +122,9 @@ producing placeholder numbers.
 ## Environment
 
 Python 3.11, not 3.13 (missing wheels). Install from `phase1_baseline/requirements.txt`.
+MediaPipe 1.2 needs `libEGL.so.1` and `libGLESv2.so.2`, which the tests do not catch because
+they stub the landmarker. Install them with `sudo apt-get install -y libegl1 libgles2`, not
+conda, since libgl1 also comes from apt. Run `src.selfcheck` to confirm a real load.
+
 Check `torch.cuda.is_available()` before assuming GPU; a CPU-only torch on a GPU server is a
 common and quiet mistake.

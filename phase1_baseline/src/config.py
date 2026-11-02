@@ -25,13 +25,19 @@ MOUTH_VERTICAL_PAIRS = ((81, 178), (13, 14), (311, 402))
 # Six-point canonical face model in millimetres, origin at the nose tip.
 # Paired with the landmark indices below for cv2.solvePnP.
 POSE_LANDMARKS = (1, 152, 33, 263, 61, 291)
+# Axes follow OpenCV's camera frame: X right, Y DOWN, Z away from the camera.
+# The widely copied version of this model is Y-up (chin negative, eyes positive),
+# which disagrees with image coordinates and makes solvePnP return a pitch near
+# 180 degrees for a frontal face. That offset sits right on the angle wrap, so
+# pitch jumps between -179 and +179 during an ordinary nod and destroys
+# pitch_std and pitch_range. Y and Z are negated here to match the camera.
 POSE_MODEL_3D = (
     (0.0, 0.0, 0.0),           # 1   nose tip
-    (0.0, -330.0, -65.0),      # 152 chin
-    (-225.0, 170.0, -135.0),   # 33  right eye outer corner
-    (225.0, 170.0, -135.0),    # 263 left eye outer corner
-    (-150.0, -150.0, -125.0),  # 61  right mouth corner
-    (150.0, -150.0, -125.0),   # 291 left mouth corner
+    (0.0, 330.0, 65.0),        # 152 chin, below the nose, so +Y
+    (-225.0, -170.0, 135.0),   # 33  right eye outer corner, above the nose
+    (225.0, -170.0, 135.0),    # 263 left eye outer corner
+    (-150.0, 150.0, 125.0),    # 61  right mouth corner
+    (150.0, 150.0, 125.0),     # 291 left mouth corner
 )
 
 # --------------------------------------------------------------- eye-openness

@@ -93,7 +93,7 @@ def rotation_to_euler(rmat: np.ndarray) -> tuple[float, float, float]:
     """Rotation matrix to (yaw, pitch, roll) in degrees.
 
     Yaw   = turning left/right
-    Pitch = nodding up/down   <- the drowsiness-relevant axis
+    Pitch = nodding up/down, positive means nodding DOWN   <- the drowsiness-relevant axis
     Roll  = tilting the head toward a shoulder
     """
     sy = math.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)

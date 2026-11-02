@@ -28,10 +28,13 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [x] 1.1 Per-frame geometry: EAR, MAR, head pose via solvePnP, yaw correction — `phase1_baseline/src/geometry.py`
 - [x] 1.1 Blink/PERCLOS layer: per-subject baselines, closure events, rolling PERCLOS — `phase1_baseline/src/blinks.py`
 - [x] 1.1 Two-pass CLI (`extract` → `aggregate`), resumable, NaN-safe — `phase1_baseline/src/`
-- [x] 1.1 Test suite: 54 tests, geometry vs synthetic projections, pipeline end to end with a stub landmarker
+- [x] 1.1 Test suite: 120 tests, geometry vs synthetic projections, ITA vs hand-computed values, pipeline end to end with a stub landmarker
+- [x] 1.1 Subgroup annotation tool: reference frames, ITA, pre-filled and blind sheets (no real data run yet) — `phase1_baseline/src/subgroups.py`
+- [x] 1.1 Head-pose axis fix: pose model now matches OpenCV's Y-down camera frame, positive pitch = nodding down — `phase1_baseline/src/config.py`
+- [x] 1.1 Server env: MediaPipe loads on the tasks backend after `apt-get install libegl1 libgles2`
 - [ ] 1.1 **Self-check run on one real video** (`python -m src.selfcheck --video ...`) ← first thing to do once data lands
 - [ ] 1.1 Full extraction run over all 180 videos
-- [ ] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check
+- [ ] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check on age, gender presentation and glasses + blind ITA spot-check
 - [ ] 1.1 Class/subgroup balance table generated
 - [ ] 1.2 Architecture benchmark: CNN-hybrid vs YOLOv8-based vs ViT/Swin vs LSTM-temporal — `phase1_baseline/results/architecture_benchmark.csv`
 - [ ] 1.2 Baseline architecture selected + justification written
@@ -99,6 +102,9 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 | 2026-10-29 | A closure event must reach <0.30 openness to count, on top of threshold hysteresis | Hysteresis alone let a signal sagging to 0.44 register as one 20-second microsleep. Depth gate added. See `config.EVENT_MIN_DEPTH` and `tests/test_blinks.py::test_hysteresis_rejects_threshold_noise` | Depth gate |
 | 2026-10-29 | `--stride` kept at 1; no temporal downsampling | A 0.2 s blink at 15 fps is 3 frames, too few to measure duration or reopening speed, which is the earliest drowsiness indicator | Full frame rate |
 | 2026-10-29 | Face-detection rate logged per video and treated as a fairness metric in its own right | If tracking fails more often on darker skin or glasses, that is a distinct failure mode from the detector being wrong, and it must not be hidden inside an accuracy number | Logged per video |
+| 2026-11-02 | Pose model switched to OpenCV's Y-down camera frame; positive pitch = nodding down | The Y-up model put a frontal pitch near the ±180 wrap, which corrupts `pitch_std` and `pitch_range`. See `tests/test_geometry.py::TestHeadPoseConvention`, which starts from image coordinates because the roundtrip tests cancel the error | Y-down model |
+| 2026-11-02 | ITA clipping: unreliable above `clipped_fraction` 0.02, with the median over non-clipped pixels | "Any channel at 0 or 255" tripped on 0.03% of pixels at a 0.37° spread in a smoke test. 0.02 is not yet checked on UTA-RLDD. See `data/subgroup_annotation_protocol.md` | 2% threshold |
+| 2026-11-02 | Cohen's κ on age, gender presentation and glasses only; ITA gets a blind human spot-check | ITA is computed, so κ against it is not κ. The spot-check is reported as ITA-to-human agreement, never as inter-annotator reliability. See `data/subgroup_annotation_protocol.md` | κ on 3 attributes + spot-check |
 
 ## Blockers / Open Questions
 - **UTA-RLDD not yet downloaded.** 111.3 GB across 10 zips, direct from Google Drive, no form needed. Phase 1.1 code is written and tested but cannot run until this lands. Download one fold first and run the self-check on a single video before pulling the rest.

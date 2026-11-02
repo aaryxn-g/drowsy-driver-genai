@@ -96,6 +96,85 @@ def rotation(yaw_deg: float, pitch_deg: float, roll_deg: float) -> np.ndarray:
     return rz @ ry @ rx
 
 
+class TestHeadPoseConvention:
+    """Pose tests that start from image coordinates, not from config.POSE_MODEL_3D.
+
+    TestHeadPose projects the model it later decodes, so a wrong axis convention
+    cancels out and those tests still pass. Nothing here reads the model, except
+    the test that asserts its axes directly.
+
+    Convention: positive pitch means nodding down.
+    """
+    W, H = 640, 480
+    POSE_ORDER = ("nose", "chin", "right_eye", "left_eye", "right_mouth", "left_mouth")
+
+    # A face in OpenCV's camera axes: X right, Y down, Z away from the camera.
+    # Written out here on purpose, so that it is independent of the config model.
+    FACE_MM = {
+        "nose": (0.0, 0.0, 0.0),
+        "chin": (0.0, 330.0, 65.0),
+        "right_eye": (-225.0, -170.0, 135.0),
+        "left_eye": (225.0, -170.0, 135.0),
+        "right_mouth": (-150.0, 150.0, 125.0),
+        "left_mouth": (150.0, 150.0, 125.0),
+    }
+
+    def landmarks(self, image_xy: dict[str, tuple[float, float]]) -> np.ndarray:
+        pts = np.zeros((478, 3), dtype=float)
+        for name, idx in zip(self.POSE_ORDER, config.POSE_LANDMARKS):
+            pts[idx] = (*image_xy[name], 0.0)
+        return pts
+
+    def pitch_of_nod(self, angle_deg: float) -> float:
+        """Rotate the face about camera X by angle_deg, project it, and solve."""
+        a = math.radians(angle_deg)
+        rx = np.array([[1, 0, 0],
+                       [0, math.cos(a), -math.sin(a)],
+                       [0, math.sin(a), math.cos(a)]])
+        k = geometry.camera_matrix(self.W, self.H)
+        image_xy = {}
+        for name, point in self.FACE_MM.items():
+            proj = k @ (rx @ np.asarray(point) + np.array([0.0, 0.0, 1000.0]))
+            image_xy[name] = (proj[0] / proj[2], proj[1] / proj[2])
+        return geometry.head_pose(self.landmarks(image_xy), self.W, self.H)[1]
+
+    def test_frontal_face_from_image_pixels_is_near_zero_pitch(self):
+        pts = self.landmarks({
+            "nose": (320.0, 240.0),
+            "chin": (320.0, 340.0),         # larger y: below the nose
+            "right_eye": (250.0, 190.0),    # smaller y: above the nose
+            "left_eye": (390.0, 190.0),
+            "right_mouth": (275.0, 285.0),
+            "left_mouth": (365.0, 285.0),
+        })
+        pitch = geometry.head_pose(pts, self.W, self.H)[1]
+        assert abs(pitch) < 20
+        assert abs(abs(pitch) - 180) > 100
+
+    def test_applied_rotation_is_recovered_and_positive_means_nodding_down(self):
+        for applied in (-20, -10, 0, 10, 20):
+            assert self.pitch_of_nod(applied) == pytest.approx(applied, abs=0.5)
+
+        # At +20 the eyes move up the image relative to the nose: the head is down.
+        a = math.radians(20)
+        _, eye_y, eye_z = self.FACE_MM["right_eye"]
+        assert eye_y * math.cos(a) - eye_z * math.sin(a) < eye_y
+
+    def test_nod_has_no_wrap_discontinuity(self):
+        pitches = [self.pitch_of_nod(a) for a in range(-30, 31, 5)]
+        steps = np.diff(pitches)
+        assert np.all(steps > 0)
+        assert np.all(np.abs(steps) <= 10)
+
+    def test_model_axes_match_the_camera_frame(self):
+        model = dict(zip(config.POSE_LANDMARKS, config.POSE_MODEL_3D))
+        assert model[1] == (0.0, 0.0, 0.0)
+        assert model[152][1] > 0                        # chin is +Y
+        assert model[33][1] < 0 and model[263][1] < 0   # eyes are -Y
+        assert all(p[2] > 0 for i, p in model.items() if i != 1)  # all behind the nose
+        assert model[33][0] < 0                         # landmark 33 is at -X
+
+
 class TestHeadPose:
     @pytest.mark.parametrize("yaw,pitch,roll", [
         (0, 0, 0), (20, 0, 0), (0, 15, 0), (0, 0, 25),

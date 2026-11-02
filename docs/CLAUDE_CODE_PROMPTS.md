@@ -29,7 +29,7 @@ Read phase1_baseline/README.md and phase1_baseline/src/selfcheck.py.
 I have just downloaded the first fold of UTA-RLDD to <PATH>. Do this in order:
 
 1. Create the conda env from phase1_baseline/requirements.txt (python 3.11) and run
-   `python -m pytest tests -q` from inside phase1_baseline. I expect 54 passed. If any
+   `python -m pytest tests -q` from inside phase1_baseline. I expect 120 passed. If any
    fail, stop and show me the failure before doing anything else.
 2. Run `python -m src.manifest --root "<PATH>" --out data/manifest.csv` and show me the
    summary it prints plus the first 5 rows. Tell me whether the discovered structure
@@ -127,7 +127,8 @@ B) `python -m src.subgroups ita --refs data/refs --out data/ita.csv`
    - ITA = atan((L* - 50) / b*) * 180 / pi, bucketed into the protocol's six bands
    - report per subject: ITA per candidate frame, the median, the spread across the three
      candidates, and an `ita_reliable` boolean that is False when the spread exceeds 10
-     degrees or the patch is clipped (any channel at 0 or 255)
+     degrees or more than 2% of patch pixels are clipped (any channel at 0 or 255),
+     with ITA taken as the median over the non-clipped pixels
 
 Write tests with synthetic patches of known L*a*b* values where the expected ITA is
 computed by hand, including one clipped patch that must come back unreliable.

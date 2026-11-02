@@ -27,7 +27,7 @@ ship 3.13 wheels on Windows.
 python -m pytest tests -q
 ```
 
-54 tests. They cover the geometry against hand-computed values and against
+120 tests. They cover the geometry against hand-computed values and against
 synthetically projected faces at known head angles, the blink and PERCLOS logic
 against series with known ground truth, and both pipeline passes end to end with
 a stub landmarker. They do not need any dataset.
@@ -100,6 +100,46 @@ amount of modelling will fix it.
 
 ---
 
+## Subgroup annotation
+
+Run this once the dataset is on disk. It needs only each subject's alert video.
+
+```bash
+python -m src.subgroups extract-refs --manifest data/manifest.csv --root "D:/UTA-RLDD"
+python -m src.subgroups ita --refs data/refs --out data/ita.csv
+```
+
+`extract-refs` saves up to three full-resolution PNGs per subject to
+`data/refs/<subject_id>_{0,1,2}.png`. The frames are frontal (|yaw| < 10 degrees),
+near the video's median brightness and at least 15 s apart, so the spread check
+compares separate moments. It can resume, and `data/refs/_refs_log.csv` records
+what was chosen and why any subject fell short.
+
+`ita` writes:
+
+| File | Contents |
+|---|---|
+| `data/ita.csv` | ITA per candidate, median, spread, band, `ita_reliable` and the reason if not |
+| `data/subgroup_annotations_prefilled.csv` | every subject, in schema column order; only ITA and clip ids filled |
+| `data/subgroup_annotations_prefilled_annotator2_blind.csv` | seeded 20% sample for the second annotator, with no ITA and no first-annotator labels; includes the skin-tone spot-check |
+
+ITA is the median over the patch pixels that are not clipped (no channel at 0 or
+255). `ita_reliable` is False if the spread exceeds 10 degrees, more than 2% of a
+candidate's patch pixels are clipped, there are fewer than three usable candidates,
+or b* <= 0. `clipped_fraction_*` is kept per candidate so the threshold can be tuned
+on real data.
+Subjects with no usable frame still get a row. `ita` refuses to overwrite existing
+sheets, because they may hold hand labels.
+
+In the prefilled sheet, `age_bracket`, `gender_presentation` and `glasses` hold the
+adjudicated final labels. Each annotator's own labels go in the `_a1` and `_a2`
+columns, which feed Cohen's kappa. Skin tone is computed, so it gets no kappa:
+`skin_tone_spot_check` is a blind human check that validates the ITA band, and it
+is reported as ITA-to-human agreement. Save the adjudicated result as `data/subgroup_annotations.csv`, the file
+everything downstream reads.
+
+---
+
 ## The one design decision worth knowing
 
 Eye openness is meaningless in absolute terms. Eye shape varies so much between
@@ -139,6 +179,10 @@ PERCLOS (mean and max, P80 and P70), blink count and rate, mean blink duration,
 mean closing and reopening speed, long-closure and microsleep counts, total
 closure time, MAR mean and 95th percentile, yawn frame fraction, head-pitch
 standard deviation and range, plus `detection_rate` and a `low_quality` flag.
+
+Positive head pitch means nodding down. Read pitch as change within a video, not
+as an absolute angle: the camera is uncalibrated, and a frontal face can read
+well away from 0 depending on where it sits in the frame.
 
 ---
 

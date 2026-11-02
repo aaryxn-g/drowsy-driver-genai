@@ -39,7 +39,7 @@
 
 ### 1.1 Data preparation
 - Pool NTHU-DDD + UTA-RLDD. Extract per-frame/per-clip labels: eye state (open/closed), yawn state, head-pose angle (pitch/yaw/roll via a landmark model, e.g. MediaPipe FaceMesh or 6DRepNet).
-- **Annotate demographic metadata** for every subject: skin tone (Fitzpatrick or ITA-based, not self-declared race — self-declared race is not directly derivable from video and is ethically fraught; use a validated skin-reflectance proxy instead), apparent age bracket, gender presentation, glasses/no-glasses. This subgroup table is what every later "gap" number is computed against — get an independent second annotator to cross-check a sample and report inter-annotator agreement (Cohen's κ).
+- **Annotate demographic metadata** for every subject: skin tone (Fitzpatrick or ITA-based, not self-declared race — self-declared race is not directly derivable from video and is ethically fraught; use a validated skin-reflectance proxy instead), apparent age bracket, gender presentation, glasses/no-glasses. This subgroup table is what every later "gap" number is computed against — get an independent second annotator to cross-check a sample and report inter-annotator agreement (Cohen's κ) on the human-labelled attributes. ITA is computed, so it gets a blind human spot-check instead; see `phase1_baseline/data/subgroup_annotation_protocol.md`.
 - Report class balance and subgroup balance explicitly (a table). This *is* your scarcity/imbalance evidence — the headline justification for the whole project — so make it rigorous, not anecdotal.
 
 ### 1.2 Architecture shortlist (empirically compared, not assumed)
