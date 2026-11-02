@@ -1,0 +1,51 @@
+# Datasets. Never commit these: UTA-RLDD alone is 111 GB.
+data/
+*/data/raw/
+*/data/frames/
+*/data/refs/
+**/UTA-RLDD/
+**/NTHU*/
+**/YawDD*/
+**/FFHQ*/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Personal documents. The signed licence agreement contains a home address
+# and a signature image, so it stays off any remote.
+*LicenseAgreement*.pdf
+*LicenceAgreement*.pdf
+
+# Generated outputs
+*.parquet
+server_report.txt
+setup_report.txt
+**/results/*.csv
+**/charts/*.png
+**/*.meta.json
+phase3_synthetic_dataset/raw/*
+phase3_synthetic_dataset/balanced/*
+!**/.gitkeep.md
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.task
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
