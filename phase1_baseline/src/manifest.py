@@ -13,6 +13,10 @@ label (0 alert, 5 low vigilant, 10 drowsy).
 Nothing here assumes that layout is exactly right. The scanner discovers what is
 actually on disk and reports anything it could not classify instead of guessing,
 because a silently mislabelled video would poison every downstream number.
+
+Each video is also probed for its rotation flag, resolution, frame rate, duration
+and bitrate. Resolution is a quality covariate for Phase 1.3. A video that cannot be
+probed stays in the manifest with `probe_error` set.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import csv
 import re
 from pathlib import Path
 
-from . import config
+from . import config, video
 
 VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".MP4", ".AVI", ".MOV"}
 FOLD_RE = re.compile(r"fold[\s_-]*(\d+)", re.IGNORECASE)
@@ -37,6 +41,15 @@ def infer_fold(path: Path, root: Path) -> str | None:
 
 def infer_class(path: Path) -> str | None:
     return config.UTARLDD_CLASS_FROM_STEM.get(path.stem.strip())
+
+
+def probe_columns(path: Path) -> dict:
+    """The video's quality covariates, blank plus a reason if it cannot be read."""
+    blank = {column: "" for column in video.INFO_COLUMNS}
+    try:
+        return {**video.probe(path).as_row(), "probe_error": ""}
+    except Exception as exc:
+        return {**blank, "probe_error": f"{type(exc).__name__}: {exc}"}
 
 
 def scan(root: Path) -> tuple[list[dict], list[dict]]:
@@ -61,6 +74,7 @@ def scan(root: Path) -> tuple[list[dict], list[dict]]:
             "class": label or "",
             "relpath": str(path.relative_to(root)).replace("\\", "/"),
             "size_bytes": path.stat().st_size,
+            **probe_columns(path),
         }
         if label is None or fold is None:
             record["reason"] = (
@@ -94,6 +108,17 @@ def summarise(rows: list[dict]) -> str:
                   if len({r['class'] for r in rows if r['subject_id'] == s}) < 3]
     if incomplete:
         lines.append(f"subjects missing a class: {len(incomplete)} -> {incomplete[:10]}")
+
+    probed = [r for r in rows if not r.get("probe_error")]
+    rotated = sum(1 for r in probed if r["rotation_deg"])
+    low_res = [r for r in probed
+               if video.is_low_resolution(r["effective_width"], r["effective_height"])]
+    lines.append(f"rotated videos    {rotated}")
+    lines.append(f"low resolution    {len(low_res)} videos, "
+                 f"{len({r['subject_id'] for r in low_res})} subjects (flagged, kept)")
+    failed = len(rows) - len(probed)
+    if failed:
+        lines.append(f"could not probe   {failed} videos, see probe_error in the manifest")
     return "\n".join(lines)
 
 

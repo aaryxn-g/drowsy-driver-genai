@@ -50,6 +50,10 @@ def main() -> int:
     ear = df["ear"].to_numpy(dtype=float)
     finite = ear[np.isfinite(ear)]
 
+    print(f"rotation_deg       : {meta['rotation_deg']} ({meta['rotation_method']})")
+    print(f"stored resolution  : {meta['stored_width']}x{meta['stored_height']}")
+    print(f"effective resol.   : {meta['effective_width']}x{meta['effective_height']}"
+          f"{'  LOW-RESOLUTION, flagged not dropped' if meta['low_resolution'] else ''}")
     print(f"frames read        : {len(df)}")
     print(f"reported fps       : {fps:.1f}")
     print(f"seconds per frame  : {meta['seconds_elapsed'] / max(1, len(df)):.4f}")

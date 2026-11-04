@@ -102,6 +102,13 @@ LONG_CLOSURE_MAX_S = 1.00     # prolonged closure
 # on some subgroups, that is a finding, not a preprocessing nuisance.
 MIN_DETECTION_RATE = 0.70
 
+# Resolution varies widely in this dataset (240x426 to 848x480 in a sample of six),
+# and coarse landmarks can pass for a subgroup accuracy gap, so Phase 1.3 has to be
+# able to regress it out. Videos with a short side below this are flagged and KEPT:
+# dropping one would break the never-drop-subjects invariant. A starting value, not
+# yet checked on UTA-RLDD.
+MIN_RESOLUTION_SHORT_SIDE = 360
+
 # UTA-RLDD labels its three recordings per subject on the Karolinska scale:
 # 0 = alert, 5 = low vigilant, 10 = drowsy.
 UTARLDD_CLASS_FROM_STEM = {"0": "alert", "5": "low_vigilant", "10": "drowsy"}

@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import blinks, config
+from . import blinks, config, video
 
 
 def load_frames(frames_dir: Path, video_id: str) -> pd.DataFrame | None:
@@ -141,6 +141,23 @@ def confounded_by_class(features: pd.DataFrame) -> pd.DataFrame:
         columns={"sum": "confounded", "count": "videos", "mean": "fraction"})
 
 
+def resolution_features(row: dict) -> dict:
+    """Quality covariates copied from the manifest, plus the low_resolution flag.
+
+    A flag and a covariate, never a filter: low-resolution subjects stay in. The flag
+    is None rather than False when the manifest cannot say, so an unmeasured video
+    cannot pass as a measured one.
+    """
+    columns = ["rotation_deg", "rotation_method", "stored_width", "stored_height",
+               "effective_width", "effective_height", "bitrate_kbps"]
+    out: dict = {c: row.get(c, "") for c in columns}
+    width = pd.to_numeric(out["effective_width"], errors="coerce")
+    height = pd.to_numeric(out["effective_height"], errors="coerce")
+    known = bool(np.isfinite(width) and np.isfinite(height))
+    out["low_resolution"] = video.is_low_resolution(width, height) if known else None
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Aggregate per-frame features into per-video drowsiness features."
@@ -190,6 +207,7 @@ def main() -> int:
             baseline,
         )
         summary.update(framing_features(df))
+        summary.update(resolution_features(row))
         summary.update({
             "video_id": row["video_id"],
             "subject_id": subject,
@@ -212,11 +230,15 @@ def main() -> int:
     out = out[lead + [c for c in out.columns if c not in lead]]
     for k, name in enumerate(("pitch_centered_std", "pitch_centered_range")):
         out.insert(out.columns.get_loc("pitch_range") + 1 + k, name, out.pop(name))
+    out.insert(out.columns.get_loc("low_quality") + 1, "low_resolution",
+               out.pop("low_resolution"))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
     pd.DataFrame(event_rows).to_csv(args.events_out, index=False)
 
     confounded = confounded_by_class(out)
+    low_res = out[out["low_resolution"] == True]  # noqa: E712, the column may hold None
+    unmeasured = int(out["low_resolution"].isna().sum())
     meta = {
         "n_videos": len(out),
         "n_subjects": int(out["subject_id"].nunique()),
@@ -224,6 +246,10 @@ def main() -> int:
         "baseline_problems": problems,
         "videos_without_features": missing,
         "pitch_confounded_by_class": confounded.to_dict("index"),
+        "min_resolution_short_side": config.MIN_RESOLUTION_SHORT_SIDE,
+        "low_resolution_videos": sorted(low_res["video_id"]),
+        "low_resolution_subjects": sorted(low_res["subject_id"].unique()),
+        "videos_without_resolution": unmeasured,
     }
     args.out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
 
@@ -242,6 +268,15 @@ def main() -> int:
     print("\npitch_confounded videos by class (pitch moves with vertical position; a "
           "slump or a real head drop)")
     print(confounded.round(3).to_string())
+
+    print(f"\nlow_resolution (short side < {config.MIN_RESOLUTION_SHORT_SIDE}px): "
+          f"{len(low_res)} videos, {low_res['subject_id'].nunique()} subjects, flagged "
+          f"and kept")
+    if len(low_res):
+        print("  subjects: " + ", ".join(sorted(low_res["subject_id"].unique())))
+    if unmeasured:
+        print(f"WARNING {unmeasured} videos have no resolution in the manifest; "
+              f"rebuild it with src.manifest")
     return 0
 
 

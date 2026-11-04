@@ -3,7 +3,7 @@
 Read automatically at the start of a session in this repo. Keep it current: it is how a
 fresh session picks up context instantly.
 
-Last updated 2026-11-02.
+Last updated 2026-11-04.
 
 ## What this project is
 
@@ -48,6 +48,7 @@ in `phase1_baseline/README.md`.
 | Module | Role |
 |---|---|
 | `manifest.py` | scans UTA-RLDD, discovers subject/fold/class, refuses to guess |
+| `video.py` | opens videos the right way up, verifies rotation, records quality covariates |
 | `geometry.py` | per-frame EAR, MAR, head pose (solvePnP), yaw correction |
 | `blinks.py` | openness normalisation, closure events, rolling PERCLOS |
 | `landmarks.py` | MediaPipe wrapper, supports both solutions and tasks APIs |
@@ -56,8 +57,8 @@ in `phase1_baseline/README.md`.
 | `selfcheck.py` | validates the landmarker on one real video |
 | `subgroups.py` | reference frames, ITA and annotation sheets; never guesses human labels |
 
-`python -m pytest tests -q` from `phase1_baseline/` should report **146 passed**. If it does
-not, fix that before anything else.
+`python -m pytest tests -q` from `phase1_baseline/` should pass clean. If it does not, fix
+that before anything else.
 
 ## Invariants that must not be broken
 
@@ -86,6 +87,13 @@ instead. See `phase0_scoping/data_budget.md`.
 **Face-detection rate is a fairness metric**, logged per video. If tracking fails more for
 one subgroup, that is a distinct finding from the detector being inaccurate, and it must
 not hide inside an accuracy number.
+
+**Rotation metadata must be honoured, and never assumed to be.** UTA-RLDD files store sideways
+pixels plus a container flag, and whether `cv2.VideoCapture` acts on it depends on the build.
+A sideways face inverts EAR without raising anything, and if the file is an alert video it
+corrupts that subject's baseline and so all three of their videos. Rotate before any downscale.
+Read video through `video.OrientedVideo`, which checks the result per video. `subgroups.py`
+does not do this yet; see the tracker. `rotation_deg` uses OpenCV's sign, the opposite of ffprobe's.
 
 ## Conventions
 

@@ -33,8 +33,12 @@ def ensure_model(path: Path | None = None) -> Path:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     print(f"[landmarks] downloading face landmarker model to {target}")
+    # Into a private temp file, then renamed: shards start together, and one seeing
+    # another's half-written model would take it as complete because it is non-empty.
+    partial = target.with_name(f"{target.name}.{os.getpid()}.part")
     try:
-        urllib.request.urlretrieve(MODEL_URL, target)
+        urllib.request.urlretrieve(MODEL_URL, partial)
+        partial.replace(target)
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
             f"could not download the landmarker model ({exc}).\n"

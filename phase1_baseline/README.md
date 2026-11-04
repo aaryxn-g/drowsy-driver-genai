@@ -27,7 +27,7 @@ ship 3.13 wheels on Windows.
 python -m pytest tests -q
 ```
 
-146 tests. They cover the geometry against hand-computed values and against
+The suite should pass clean. It covers the geometry against hand-computed values and against
 synthetically projected faces at known head angles, the blink and PERCLOS logic
 against series with known ground truth, and both pipeline passes end to end with
 a stub landmarker. They do not need any dataset.
@@ -40,7 +40,8 @@ python -m src.selfcheck --video "D:/UTA-RLDD/Fold1_part1/01/0.mp4"
 
 This is the one thing the test suite cannot do, because MediaPipe needs a model
 file and a real face. It reports the face-detection rate, the EAR range and the
-blink rate, and saves `data/selfcheck_ear.png`. **Open the plot.** Every shaded
+blink rate, prints `rotation_deg` and the effective resolution, and saves
+`data/selfcheck_ear.png`. **Open the plot.** Every shaded
 band should line up with a blink you can see. If the bands are in the wrong
 places, stop and fix that before running anything else.
 
@@ -57,6 +58,10 @@ python -m src.manifest --root "D:/UTA-RLDD" --out data/manifest.csv
 Walks the extracted folds and records subject, fold and class for every video.
 Anything it cannot classify goes to `data/manifest_unclassified.csv` rather than
 being guessed at. Read that file if it appears.
+
+It also opens each video and records its orientation and quality covariates; see
+"Rotation and resolution" below. A video it cannot read stays in the manifest with
+`probe_error` set.
 
 Expected output for a complete UTA-RLDD: 180 videos, 60 subjects, 5 folds,
 60 videos per class.
@@ -79,11 +84,38 @@ Useful flags:
 | `--max-frames 900` | first 30 s of each video, for a fast dry run |
 | `--max-width 640` | inference resolution (default 640; lower is faster) |
 | `--overwrite` | redo videos already extracted |
+| `--shard 3/16` | process only rows where `row_index % 16 == 2`; see below (`--limit` applies first) |
 | `--model <path>` | use a local `face_landmarker.task` instead of downloading |
 
 `--stride` exists but leave it at 1. Processing every second frame halves the
 effective frame rate, and a 0.2 s blink at 15 fps is three frames, which is not
 enough to measure its duration or its reopening speed.
+
+To split the job across processes, start one per shard and merge the logs when all
+have finished:
+
+```bash
+mkdir -p logs
+for i in $(seq 1 16); do
+  python -m src.extract --manifest data/manifest.csv --root "<ROOT>" --out data/frames \
+      --shard $i/16 > logs/shard$i.out 2>&1 &
+done
+wait
+
+python -m src.extract --merge-logs --out data/frames --manifest data/manifest.csv
+```
+
+Every shard writes Parquet into the same directory, which is safe because `video_id`
+makes the filenames disjoint. Each keeps its own `_extraction_log_shard<i>of<n>.csv`,
+because concurrent appends to one CSV interleave and corrupt rows. `--merge-logs`
+writes `_extraction_log.csv` with one row per video, the newest if a video was redone,
+and leaves the shard logs in place. With `--manifest` it also lists videos that have no
+log row and exits non-zero. Failures are printed rather than logged, so check
+`logs/shard*.out` for `FAILED` and `MISSING`. `--shard 1/1`, or no flag, behaves as an
+ordinary single run.
+
+The machine is shared: check the load first, and time one shard before choosing `n`,
+since MediaPipe and OpenCV each start their own threads.
 
 ### 3. Aggregate into per-video features
 
@@ -140,6 +172,41 @@ everything downstream reads.
 
 ---
 
+## Rotation and resolution
+
+Phone videos store sideways pixels plus a rotation flag in the container. Whether
+`cv2.VideoCapture` acts on that flag depends on the build, and getting it wrong is
+silent: EAR is vertical over horizontal, so a turned face makes a blink push EAR up.
+`src/video.py` therefore requests rotation, checks the first decoded frame against a
+prediction made from the stored size, and rotates by hand if the request was ignored.
+A video whose frames match no prediction fails loudly rather than going through.
+
+Frames are rotated before the `--max-width` downscale, since rotating swaps the
+dimensions and so decides whether the limit applies. The limit caps width only, so a
+portrait video keeps more pixels than the same footage stored as landscape:
+`inference_width` and `inference_height` record what the landmarker actually saw.
+
+| Column | In | Meaning |
+|---|---|---|
+| `rotation_deg` | manifest, log, features | clockwise turn to display, 0/90/180/270. OpenCV's sign: ffprobe's -90 is 90 here, ffprobe's +90 is 270 |
+| `rotation_method` | manifest, log, features | `none`, `auto` (decoder rotated) or `manual` (we rotated) |
+| `stored_width`, `stored_height` | manifest, log, features | as stored in the file |
+| `effective_width`, `effective_height` | manifest, log, features | after rotation, before downscaling |
+| `inference_width`, `inference_height` | log | after downscaling |
+| `fps`, `duration_s` | manifest, log | from the container; features has its own, from the frames read |
+| `bitrate_kbps` | manifest, log, features | from the container, else file size over duration |
+
+`low_resolution` is True when the short side of the effective size is below
+`MIN_RESOLUTION_SHORT_SIDE` (360 px, a starting value not yet checked on UTA-RLDD). It
+sits beside `low_quality` in `video_features.csv`, and the aggregate run prints and
+records the affected videos and subjects. **It is a flag, not a filter.** Low-resolution
+subjects are kept, because dropping subjects destroys the ability to measure the gap.
+Blank means the manifest had no resolution for that video, so rebuild it. Resolution is
+a covariate to regress out in Phase 1.3, or a landmark-precision effect can be misread
+as a subgroup accuracy gap.
+
+---
+
 ## The one design decision worth knowing
 
 Eye openness is meaningless in absolute terms. Eye shape varies so much between
@@ -167,7 +234,8 @@ data/
   manifest.csv                 subject, fold, class, path per video
   manifest_unclassified.csv    anything the scanner refused to label
   frames/<video_id>.parquet    per-frame EAR, MAR, raw and centred pose, face position, detected
-  frames/_extraction_log.csv   fps, detection rate, runtime per video
+  frames/_extraction_log.csv   rotation, resolution, fps, bitrate, detection rate, runtime per video
+  frames/_extraction_log_shard<i>of<n>.csv   the same, per shard, before --merge-logs
   video_features.csv           per-video features, the Phase 1.2 model input
   closure_events.csv           every blink and closure with duration and speeds
   video_features.meta.json     what was skipped and why
@@ -178,7 +246,8 @@ data/
 PERCLOS (mean and max, P80 and P70), blink count and rate, mean blink duration,
 mean closing and reopening speed, long-closure and microsleep counts, total
 closure time, MAR mean and 95th percentile, yawn frame fraction, head-pitch
-standard deviation and range, plus `detection_rate` and a `low_quality` flag.
+standard deviation and range, plus `detection_rate` and the `low_quality` and
+`low_resolution` flags, with the rotation and resolution columns described above.
 
 Framing columns: `pitch_centered_std`, `pitch_centered_range`, `nose_y_drift`,
 `nose_x_drift`, `face_scale_drift`, `pitch_nose_y_corr` and `pitch_confounded`. See
