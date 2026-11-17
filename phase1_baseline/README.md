@@ -63,8 +63,17 @@ It also opens each video and records its orientation and quality covariates; see
 "Rotation and resolution" below. A video it cannot read stays in the manifest with
 `probe_error` set.
 
-Expected output for a complete UTA-RLDD: 180 videos, 60 subjects, 5 folds,
-60 videos per class.
+Expected output for a complete UTA-RLDD: 182 videos, 60 subjects, 5 folds, no
+subject missing a class. 182 rather than 180 because subjects 32 and 49 each have
+their drowsy recording split into `10_1` and `10_2`. Both parts classify as drowsy,
+carry `part` 1 and 2 (blank for unsplit videos), and stay separate videos: subject
+49's halves are 270x480 and 162x288, so joining them would mean a re-encode that
+degrades the better half.
+
+Every file under the root ends up in exactly one place: the manifest, `manifest_unclassified.csv`
+(unknown stem, no fold, or a `video_id` seen twice), or `manifest_skipped.csv` (not a
+video extension). Extensions are compared lowercased and include `.m4v`, which subject
+46 uses. Check the skipped file holds no recordings.
 
 ### 2. Extract per-frame features
 
@@ -91,19 +100,27 @@ Useful flags:
 effective frame rate, and a 0.2 s blink at 15 fps is three frames, which is not
 enough to measure its duration or its reopening speed.
 
-To split the job across processes, start one per shard and merge the logs when all
-have finished:
+To split the job across processes, use the launcher, inside tmux:
 
 ```bash
-mkdir -p logs
-for i in $(seq 1 16); do
-  python -m src.extract --manifest data/manifest.csv --root "<ROOT>" --out data/frames \
-      --shard $i/16 > logs/shard$i.out 2>&1 &
-done
-wait
+ROOT=~/data/UTA-RLDD PYTHON=~/miniconda3/envs/drowsy/bin/python scripts/run_extraction.sh 8
+```
 
+It caps ffmpeg, OpenMP and BLAS at one thread per shard, starts N shards (default 8)
+two seconds apart, waits for them, greps their output for `FAILED` and `MISSING`, and
+runs `--merge-logs`. Do not start the shards with a bare loop. ffmpeg's h264 decoder
+starts one thread per core, the server has 64 cores and the container's `pids.max` is
+2048, so 16 uncapped shards run out of processes and every one dies with
+`Could not open codec h264, error: -11` before reading a frame. To merge by hand:
+
+```bash
 python -m src.extract --merge-logs --out data/frames --manifest data/manifest.csv
 ```
+
+Each video gets its own landmarker instance. MediaPipe's VIDEO mode requires strictly
+increasing timestamps for an instance's whole life, and every video's clock starts at
+0, so a shared instance runs one video and then raises
+`Input timestamp must be monotonically increasing` on every one after it.
 
 Every shard writes Parquet into the same directory, which is safe because `video_id`
 makes the filenames disjoint. Each keeps its own `_extraction_log_shard<i>of<n>.csv`,

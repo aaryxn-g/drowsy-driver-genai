@@ -56,16 +56,29 @@ def synth_face(openness: float, mouth: float = 0.05,
 
 
 class StubLandmarker:
-    """Returns a face whose eye openness follows a scripted schedule."""
+    """Returns a face whose eye openness follows a scripted schedule.
+
+    It enforces the real tasks API's VIDEO-mode contract: timestamps must strictly
+    increase over the instance's life, and a closed instance cannot be used. Without
+    this the suite passed while every real shard died on its second video.
+    """
 
     def __init__(self, schedule, miss_frames: set[int] | None = None):
         self.schedule = schedule
         self.miss = miss_frames or set()
         self.calls = 0
+        self.last_timestamp_ms: int | None = None
+        self.closed = False
 
     backend = "stub"
 
     def __call__(self, frame, timestamp_ms=0):
+        if self.closed:
+            raise RuntimeError("landmarker used after close()")
+        if self.last_timestamp_ms is not None and timestamp_ms <= self.last_timestamp_ms:
+            # The message MediaPipe raises, so a test can match on it.
+            raise ValueError("Input timestamp must be monotonically increasing.")
+        self.last_timestamp_ms = timestamp_ms
         i = self.calls
         self.calls += 1
         if i in self.miss:
@@ -73,13 +86,13 @@ class StubLandmarker:
         return synth_face(self.schedule(i))
 
     def close(self):
-        pass
+        self.closed = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
-        pass
+        self.close()
 
 
 def write_video(path: Path, n_frames: int, fps: int = 30,
@@ -225,19 +238,20 @@ class TestManifestScanner:
     def test_discovers_subjects_folds_and_classes(self, tmp_path):
         from src import manifest as man
 
-        for fold in (1, 2):
-            for subject in ("01", "02"):
+        # Subject ids are unique across folds, as in UTA-RLDD.
+        for fold, subjects in ((1, ("01", "02")), (2, ("13", "14"))):
+            for subject in subjects:
                 d = tmp_path / f"Fold{fold}_part1" / subject
                 d.mkdir(parents=True)
                 for stem in ("0", "5", "10"):
                     (d / f"{stem}.mp4").write_bytes(b"x")
 
-        rows, problems = man.scan(tmp_path)
+        rows, problems, _ = man.scan(tmp_path)
         assert len(rows) == 12
         assert problems == []
         assert {r["class"] for r in rows} == set(config.CLASS_ORDER)
         assert {r["fold"] for r in rows} == {"1", "2"}
-        assert {r["subject_id"] for r in rows} == {"01", "02"}
+        assert {r["subject_id"] for r in rows} == {"01", "02", "13", "14"}
 
     def test_unknown_stems_are_reported_not_guessed(self, tmp_path):
         from src import manifest as man
@@ -247,7 +261,7 @@ class TestManifestScanner:
         (d / "0.mp4").write_bytes(b"x")
         (d / "mystery.mp4").write_bytes(b"x")
 
-        rows, problems = man.scan(tmp_path)
+        rows, problems, _ = man.scan(tmp_path)
         assert len(rows) == 1
         assert len(problems) == 1
         assert problems[0]["reason"] == "unrecognised file stem"

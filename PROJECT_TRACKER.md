@@ -1,6 +1,6 @@
 # Project Tracker — Synthetic Drowsy-Driver Data Generation & Fatigue Detection
 
-Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-04
+Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-17
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked
 
@@ -35,9 +35,12 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [x] 1.1 Server env: MediaPipe loads on the tasks backend after `apt-get install libegl1 libgles2`
 - [x] 1.1 (2026-11-04) Container rotation verified per video and applied before downscale; rotation, resolution, fps, duration and bitrate recorded in manifest and log; `low_resolution` flag added (flagged, kept) — `phase1_baseline/src/video.py`
 - [x] 1.1 (2026-11-04) `--shard i/n` with per-shard logs and `--merge-logs` — `phase1_baseline/src/extract.py`
+- [x] 1.1 (2026-11-17) **Bug, blocking:** one landmarker was shared across videos, so MediaPipe's VIDEO mode saw timestamps fall from ~601000 ms back to 0 and raised `Input timestamp must be monotonically increasing` on every video after a shard's first (01_0 ran, 01_10 failed). Now one instance per video, closed after it; the stub landmarker enforces the same contract, plus a real-MediaPipe two-video test that runs where the model is cached — `phase1_baseline/src/extract.py:extract_videos`, `tests/test_extraction_run.py`
+- [x] 1.1 (2026-11-17) **Bug:** the manifest dropped real files silently. `.m4v` was missing, so two of subject 46's three videos appeared nowhere; suffixes are now compared lowercased. Every non-video file goes to `data/manifest_skipped.csv` with a count in the summary. `10_1`/`10_2` (subjects 32, 49) classify as drowsy with a new `part` column, kept as separate videos, not concatenated. A `video_id` seen twice is refused to the unclassified list — `phase1_baseline/src/manifest.py`, `tests/test_manifest.py`
+- [x] 1.1 (2026-11-17) `scripts/run_extraction.sh`: caps ffmpeg/OpenMP/BLAS at one thread per shard and staggers N shards (default 8). Uncapped, 16 shards exhaust the container's pids.max of 2048 on a 64-core box and die with `Could not open codec h264, error: -11`
 - [ ] 1.1 `subgroups.py` reads video through plain `cv2.VideoCapture`: move it to `video.OrientedVideo` before `extract-refs` runs on a build that ignores rotation
 - [ ] 1.1 **Self-check run on one real video** (`python -m src.selfcheck --video ...`) ← first thing to do once data lands
-- [ ] 1.1 Full extraction run over all 180 videos
+- [ ] 1.1 Full extraction run over all 182 videos (180 recordings, two of them split in two)
 - [ ] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check on age, gender presentation and glasses + blind ITA spot-check
 - [ ] 1.1 Class/subgroup balance table generated
 - [ ] 1.2 Architecture benchmark: CNN-hybrid vs YOLOv8-based vs ViT/Swin vs LSTM-temporal — `phase1_baseline/results/architecture_benchmark.csv`
@@ -110,6 +113,8 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 | 2026-11-02 | ITA clipping: unreliable above `clipped_fraction` 0.02, with the median over non-clipped pixels | "Any channel at 0 or 255" tripped on 0.03% of pixels at a 0.37° spread in a smoke test. 0.02 is not yet checked on UTA-RLDD. See `data/subgroup_annotation_protocol.md` | 2% threshold |
 | 2026-11-02 | Cohen's κ on age, gender presentation and glasses only; ITA gets a blind human spot-check | ITA is computed, so κ against it is not κ. The spot-check is reported as ITA-to-human agreement, never as inter-annotator reliability. See `data/subgroup_annotation_protocol.md` | κ on 3 attributes + spot-check |
 | 2026-11-02 | Absolute pitch is not used; raw and centred pitch are both kept until real data decides. **Phase 6 limitation** | Absolute pitch from an uncalibrated camera is not meaningful. Only change within a video is, and even that is confounded by framing drift unless checked. Not fully solvable without camera calibration. Neither pitch is drift-proof, and `pitch_confounded` also fires on large real nods. See `tests/test_framing.py` and `phase1_baseline/README.md` | Both, undecided |
+| 2026-11-17 | One landmarker instance per video, not a timestamp offset carried across videos | An offset would satisfy MediaPipe's monotonic check but carry tracking state from one subject's video into the next; reloading the cached model costs a second or two per video. See `tests/test_extraction_run.py` | Fresh instance per video |
+| 2026-11-17 | Split recordings (`10_1`, `10_2`) kept as separate videos with a `part` column, not concatenated | Subject 49's halves are 270x480 and 162x288; joining them needs a re-encode that degrades the better half. Per-video features and subject-level folds both handle four videos per subject. See `tests/test_manifest.py::TestSplitRecordings` | Separate parts |
 | 2026-11-04 | Rotation is verified per video rather than left to cv2, and stored size is read with AUTO off | On opencv-python 5.0.0, AUTO defaults on and `CAP_PROP_FRAME_WIDTH` reports the rotated size, so predicting from it with AUTO on swaps twice and rotates again; other builds may ignore AUTO. Checked on MP4s with patched display matrices, no UTA-RLDD file was available | `phase1_baseline/src/video.py` |
 
 ## Blockers / Open Questions

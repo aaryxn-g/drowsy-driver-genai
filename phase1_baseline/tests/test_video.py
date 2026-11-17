@@ -267,7 +267,7 @@ class TestManifestCovariates:
         d.mkdir(parents=True)
         (d / "0.mp4").write_bytes(b"x")
         install(monkeypatch, [marked_frame()], rotation=90)
-        rows, _ = manifest.scan(tmp_path)
+        rows, _, _ = manifest.scan(tmp_path)
         assert rows[0]["rotation_deg"] == 90
         assert rows[0]["effective_width"] == 4
         assert rows[0]["rotation_method"] == "auto"
@@ -277,7 +277,7 @@ class TestManifestCovariates:
         d = tmp_path / "Fold1_part1" / "01"
         d.mkdir(parents=True)
         (d / "0.mp4").write_bytes(b"x")
-        rows, _ = manifest.scan(tmp_path)
+        rows, _, _ = manifest.scan(tmp_path)
         assert len(rows) == 1
         assert rows[0]["probe_error"]
         assert rows[0]["rotation_deg"] == ""

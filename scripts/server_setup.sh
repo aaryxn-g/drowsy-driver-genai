@@ -117,7 +117,7 @@ PY
 
 # ------------------------------------------------------------------ tests
 say ""
-say "=== test suite (expect 54 passed) ==="
+say "=== test suite (should pass clean) ==="
 cd phase1_baseline || { say "ERROR: phase1_baseline not found"; exit 1; }
 python -m pytest tests -q 2>&1 | tail -20 | tee -a "../$REPORT"
 cd "$REPO_ROOT" || exit 1

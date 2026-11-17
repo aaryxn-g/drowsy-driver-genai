@@ -213,6 +213,8 @@ def main() -> int:
             "subject_id": subject,
             "fold": row.get("fold", ""),
             "class": row.get("class", ""),
+            # Which half of a split recording, blank if unsplit (NaN from read_csv).
+            "part": row["part"] if isinstance(row.get("part"), str) else "",
         })
         rows.append(summary)
 
@@ -226,7 +228,7 @@ def main() -> int:
         return 1
 
     out = pd.DataFrame(rows)
-    lead = ["video_id", "subject_id", "fold", "class"]
+    lead = ["video_id", "subject_id", "fold", "class", "part"]
     out = out[lead + [c for c in out.columns if c not in lead]]
     for k, name in enumerate(("pitch_centered_std", "pitch_centered_range")):
         out.insert(out.columns.get_loc("pitch_range") + 1 + k, name, out.pop(name))

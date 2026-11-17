@@ -15,6 +15,8 @@ Design notes that matter when this runs for hours:
   measure.
 * Frames are put the right way up first, from the container's rotation flag, and
   only then downscaled. See video.py for why that is checked rather than assumed.
+* One landmarker per video. MediaPipe's VIDEO mode needs strictly increasing
+  timestamps for the life of an instance, and each video starts again at 0.
 * Shardable. `--shard i/n` handles every row where row_index % n == i-1, so n
   processes can share one manifest. Parquet names are disjoint because video_id is,
   but each shard keeps its own log since concurrent appends to one CSV interleave.
@@ -27,6 +29,7 @@ import csv
 import re
 import time
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -110,6 +113,93 @@ def process_video(
         "backend": landmarker.backend,
     }
     return df, meta
+
+
+def _text(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def extract_videos(
+    records: list[dict],
+    root: Path,
+    out_dir: Path,
+    log_path: Path,
+    make_landmarker: Callable[[], FaceLandmarker],
+    max_width: int = 640,
+    stride: int = 1,
+    max_frames: int | None = None,
+    overwrite: bool = False,
+) -> tuple[int, int, int]:
+    """Run pass 1 over manifest rows. Returns (done, skipped, failed).
+
+    Each video gets its own landmarker from `make_landmarker`, closed when that
+    video ends. The tasks API in VIDEO mode requires strictly increasing timestamps
+    over an instance's life, and every video's clock starts at 0, so a shared
+    instance accepts the first video and raises on every one after it. Offsetting
+    timestamps across videos would avoid the error but would carry tracking state
+    from one subject's video into the next. Reloading the cached .task file costs a
+    second or two per video.
+    """
+    root, out_dir, log_path = Path(root), Path(out_dir), Path(log_path)
+    log_exists = log_path.exists()
+    done = skipped = failed = 0
+    backend_reported = False
+    for i, row in enumerate(records, 1):
+        out_path = out_dir / f"{row['video_id']}.parquet"
+        if out_path.exists() and not overwrite:
+            skipped += 1
+            continue
+
+        video_path = root / row["relpath"]
+        label = f"[{i}/{len(records)}] {row['video_id']}"
+        if not video_path.exists():
+            print(f"{label}  MISSING {video_path}")
+            failed += 1
+            continue
+
+        try:
+            with make_landmarker() as fl:
+                if not backend_reported:
+                    print(f"[extract] landmarker backend: {fl.backend}")
+                    backend_reported = True
+                df, meta = process_video(
+                    video_path, fl,
+                    max_width=max_width,
+                    stride=stride,
+                    max_frames=max_frames,
+                )
+        except Exception as exc:
+            print(f"{label}  FAILED {type(exc).__name__}: {exc}")
+            failed += 1
+            continue
+
+        df.to_parquet(out_path, index=False)
+        meta.update({
+            "video_id": row["video_id"],
+            "subject_id": row["subject_id"],
+            "fold": row.get("fold", ""),
+            "class": row.get("class", ""),
+            # Blank for an unsplit video. pandas reads a blank cell as NaN.
+            "part": _text(row.get("part")),
+        })
+        with log_path.open("a", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(meta.keys()))
+            if not log_exists:
+                w.writeheader()
+                log_exists = True
+            w.writerow(meta)
+
+        flag = "  LOW-DETECTION" if meta["detection_rate"] < config.MIN_DETECTION_RATE else ""
+        if meta["low_resolution"]:
+            flag += "  LOW-RESOLUTION"
+        if meta["rotation_deg"]:
+            flag += f"  rotated {meta['rotation_deg']} ({meta['rotation_method']})"
+        print(f"{label}  {meta['n_frames_read']} frames  "
+              f"{meta['effective_width']}x{meta['effective_height']}  "
+              f"det {meta['detection_rate']:.1%}  "
+              f"{meta['seconds_elapsed']}s{flag}")
+        done += 1
+    return done, skipped, failed
 
 
 def parse_shard(text: str) -> tuple[int, int]:
@@ -211,66 +301,19 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     log_path = args.out / log_filename(shard_i, shard_n)
-    log_exists = log_path.exists()
 
     if args.stride != 1:
         print(f"WARNING: stride={args.stride} lowers the effective frame rate to "
               f"{30 / args.stride:.1f} fps. Blink durations below "
               f"{args.stride / 30:.2f}s become unmeasurable.")
 
-    done = skipped = failed = 0
-    with FaceLandmarker(model_path=args.model) as fl:
-        print(f"[extract] landmarker backend: {fl.backend}")
-        records = manifest.to_dict("records")
-        for i, row in enumerate(records, 1):
-            out_path = args.out / f"{row['video_id']}.parquet"
-            if out_path.exists() and not args.overwrite:
-                skipped += 1
-                continue
-
-            video_path = args.root / row["relpath"]
-            label = f"[{i}/{len(records)}] {row['video_id']}"
-            if not video_path.exists():
-                print(f"{label}  MISSING {video_path}")
-                failed += 1
-                continue
-
-            try:
-                df, meta = process_video(
-                    video_path, fl,
-                    max_width=args.max_width,
-                    stride=args.stride,
-                    max_frames=args.max_frames,
-                )
-            except Exception as exc:
-                print(f"{label}  FAILED {type(exc).__name__}: {exc}")
-                failed += 1
-                continue
-
-            df.to_parquet(out_path, index=False)
-            meta.update({
-                "video_id": row["video_id"],
-                "subject_id": row["subject_id"],
-                "fold": row.get("fold", ""),
-                "class": row.get("class", ""),
-            })
-            with log_path.open("a", newline="", encoding="utf-8") as fh:
-                w = csv.DictWriter(fh, fieldnames=list(meta.keys()))
-                if not log_exists:
-                    w.writeheader()
-                    log_exists = True
-                w.writerow(meta)
-
-            flag = "  LOW-DETECTION" if meta["detection_rate"] < config.MIN_DETECTION_RATE else ""
-            if meta["low_resolution"]:
-                flag += "  LOW-RESOLUTION"
-            if meta["rotation_deg"]:
-                flag += f"  rotated {meta['rotation_deg']} ({meta['rotation_method']})"
-            print(f"{label}  {meta['n_frames_read']} frames  "
-                  f"{meta['effective_width']}x{meta['effective_height']}  "
-                  f"det {meta['detection_rate']:.1%}  "
-                  f"{meta['seconds_elapsed']}s{flag}")
-            done += 1
+    model_path = args.model
+    done, skipped, failed = extract_videos(
+        manifest.to_dict("records"), args.root, args.out, log_path,
+        make_landmarker=lambda: FaceLandmarker(model_path=model_path),
+        max_width=args.max_width, stride=args.stride, max_frames=args.max_frames,
+        overwrite=args.overwrite,
+    )
 
     print(f"\ndone {done}   skipped {skipped}   failed {failed}")
     print(f"log: {log_path}")

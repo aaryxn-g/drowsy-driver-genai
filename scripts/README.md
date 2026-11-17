@@ -5,6 +5,7 @@ Run these on the GPU server, from the repo root, in a VS Code Remote-SSH termina
 ```bash
 bash scripts/server_survey.sh    # read-only. writes server_report.txt
 bash scripts/server_setup.sh     # creates the conda env. writes setup_report.txt
+bash scripts/run_extraction.sh 8 # Phase 1.1 pass 1 as 8 shards; run inside tmux
 ```
 
 Send both report files back.
@@ -27,7 +28,7 @@ come via your laptop.
 
 **server_setup.sh** creates a conda env called `drowsy` with Python 3.11, installs a
 torch build matching the server's CUDA version rather than the default CPU-only wheel,
-installs the project requirements, and runs the 54-test suite. Everything stays inside
+installs the project requirements, and runs the test suite, which should pass clean. Everything stays inside
 the conda env and this repo.
 
 Override the env name if `drowsy` is taken on a shared account:
@@ -35,3 +36,10 @@ Override the env name if `drowsy` is taken on a shared account:
 ```bash
 ENV_NAME=aaryan_drowsy bash scripts/server_setup.sh
 ```
+
+**run_extraction.sh** runs `src.extract` as N shards (default 8) from `phase1_baseline/`,
+with ffmpeg, OpenMP and BLAS capped at one thread each, then merges the shard logs. Set
+`ROOT` to the dataset root (default `~/data/UTA-RLDD`) and `PYTHON` to the env's python.
+Extra arguments pass through to `src.extract`, e.g. `--max-frames 900` for a dry run.
+The thread caps are what keep 8 to 16 shards under the container's 2048-process limit;
+the script's header says why.
