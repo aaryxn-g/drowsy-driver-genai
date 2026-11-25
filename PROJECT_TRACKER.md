@@ -45,7 +45,8 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [ ] 1.1 Class/subgroup balance table generated
 - [ ] 1.2 Architecture benchmark: CNN-hybrid vs YOLOv8-based vs ViT/Swin vs LSTM-temporal — `phase1_baseline/results/architecture_benchmark.csv`
 - [ ] 1.2 Baseline architecture selected + justification written
-- [ ] 1.3 Per-subgroup F1 + bootstrap CIs computed
+- [x] 1.3 (2026-11-25) Baseline detector on per-video features: HGB + logistic reference, leave-one-fold-out over the 5 official folds with subject disjointness asserted, 5 seeds, subject-level bootstrap CIs. 3-class HGB 53.5 ± 1.5% accuracy [95% CI 48.0, 59.0], below the published 65.2% and the 57.8% human figure; binary alert-vs-drowsy 81.1 ± 0.6% [74.0, 87.9]. Per-seed rows in `results/detector_runs.csv` (gitignored, on the server) — `phase1_baseline/src/detector.py`
+- [ ] 1.3 Per-subgroup F1 + bootstrap CIs computed (hook is `detector.subgroup_report`; waits on age_bracket, 5 of 60 filled)
 - [ ] 1.3 Gap metrics computed (max-min F1 gap, std dev, equalized-odds gap)
 - [ ] 1.3 Detection-rate-by-subgroup analysis (tracking failure is itself a fairness finding)
 - [ ] Phase 1 deliverable report done
