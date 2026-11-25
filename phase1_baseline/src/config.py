@@ -102,6 +102,13 @@ LONG_CLOSURE_MAX_S = 1.00     # prolonged closure
 # on some subgroups, that is a finding, not a preprocessing nuisance.
 MIN_DETECTION_RATE = 0.70
 
+# Window-level features (aggregate --window-s). A window whose eye openness is
+# finite on fewer than this fraction of its frames is dropped and counted, not
+# turned into a feature row: a mostly untracked window would report the few
+# tracked frames as if they described the whole window. Same value as the video
+# flag above, for consistency; not separately validated.
+MIN_WINDOW_COVERAGE = 0.70
+
 # Resolution varies widely in this dataset (240x426 to 848x480 in a sample of six),
 # and coarse landmarks can pass for a subgroup accuracy gap, so Phase 1.3 has to be
 # able to regress it out. Videos with a short side below this are flagged and KEPT:

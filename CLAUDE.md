@@ -3,7 +3,7 @@
 Read automatically at the start of a session in this repo. Keep it current: it is how a
 fresh session picks up context instantly.
 
-Last updated 2026-11-04.
+Last updated 2026-11-25.
 
 ## What this project is
 
@@ -53,9 +53,10 @@ in `phase1_baseline/README.md`.
 | `blinks.py` | openness normalisation, closure events, rolling PERCLOS |
 | `landmarks.py` | MediaPipe wrapper, supports both solutions and tasks APIs |
 | `extract.py` | pass 1, video to per-frame parquet, resumable |
-| `aggregate.py` | pass 2, per-frame to per-video features |
+| `aggregate.py` | pass 2, per-frame to per-video features; `--window-s` for per-window features |
 | `selfcheck.py` | validates the landmarker on one real video |
 | `subgroups.py` | reference frames, ITA and annotation sheets; never guesses human labels |
+| `detector.py` | Phase 1.3 baseline detector, per video or per window, leave-one-fold-out |
 
 `python -m pytest tests -q` from `phase1_baseline/` should pass clean. If it does not, fix
 that before anything else.
@@ -121,8 +122,18 @@ IDs, unknown licence, and they breach NTHU's no-redistribution term.
 
 ## Current status
 
-Phase 1.1 code complete and tested. **Blocked on the UTA-RLDD download.** Nothing has been
-run against real data yet, so there are no results in this repo and none should be invented.
+UTA-RLDD is downloaded and all 182 videos are extracted (`phase1_baseline/data/video_features.csv`).
+Gate 3 passed: mean PERCLOS80 rises 0.040 / 0.126 / 0.266 across alert / low vigilant / drowsy.
+
+Phase 1.3 baseline detector (`src/detector.py`), leave-one-fold-out, subject-level bootstrap CIs:
+- per video: HGB 53.5% 3-class video accuracy, 81.1% binary alert-vs-drowsy
+  (published baseline 65.2%, human observers 57.8%)
+- per window, majority vote to video: 60 s windows give 62.9% 3-class [95% CI 57.0, 68.3]
+  and 86.6% binary. Shorter windows score lower; the Phase 2 clip length is 60 s (decision
+  row 2026-11-25 in the tracker)
+
+Results live in `phase1_baseline/results/*.csv`, tracked in git, appended never overwritten.
+Per-subgroup F1 waits on the annotation pass (age_bracket 5 of 60 filled).
 
 If data is not present under the configured dataset root, say so and stop rather than
 producing placeholder numbers.

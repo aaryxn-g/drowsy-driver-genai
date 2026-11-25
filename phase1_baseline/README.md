@@ -147,6 +147,39 @@ It prints a class summary at the end. **PERCLOS should rise from alert to
 low_vigilant to drowsy.** If it does not, something upstream is wrong and no
 amount of modelling will fix it.
 
+### 3b. Window-level features (for Phase 2)
+
+```bash
+python -m src.aggregate --manifest data/manifest.csv --window-s 60 30 15 10
+```
+
+Cuts each video into fixed-length windows (stride half the window unless
+`--stride-s` is given with a single `--window-s`) and computes the same feature
+set per window, via the same `summarise_frames` as the per-video path. Writes
+`data/window_features_w{W}_s{S}.csv` plus a `.meta.json` per length. The
+per-video file is left untouched.
+
+- The eye baseline is still the subject's whole alert video, and
+  `assert_subject_baselines` checks every row against it before writing.
+- Windows with eye openness on fewer than 70% of frames
+  (`config.MIN_WINDOW_COVERAGE`) are dropped. The meta file counts the drops in
+  total and per subject, since uneven tracking loss is a fairness signal.
+- Each window is summarised on its own, the way a generated clip will be, so a
+  blink at a boundary is truncated. At 60 s or less the rolling PERCLOS window
+  covers the whole slice, so `perclos80_max` equals `perclos80_mean`.
+
+## Detector (Phase 1.3)
+
+```bash
+python -m src.detector                                    # per video
+python -m src.detector --windows data/window_features_w*.csv   # per window, sweep
+```
+
+Leave-one-fold-out over the five official folds, with subject disjointness
+raised on. The window path reports window-level macro F1 and video accuracy from
+a majority vote over each video's windows. Results are appended to
+`results/detector_runs.csv` and `results/detector_window_runs.csv`.
+
 ---
 
 ## Subgroup annotation

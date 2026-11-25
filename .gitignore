@@ -22,6 +22,8 @@ data/
 server_report.txt
 setup_report.txt
 **/results/*.csv
+# ...except the results CSVs themselves: small, and the only record of what was run.
+!**/results/*.csv
 **/charts/*.png
 **/*.meta.json
 phase3_synthetic_dataset/raw/*

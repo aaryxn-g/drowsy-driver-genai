@@ -1,6 +1,6 @@
 # Project Tracker — Synthetic Drowsy-Driver Data Generation & Fatigue Detection
 
-Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-17
+Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-25
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked
 
@@ -13,7 +13,7 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [~] 0.1 Annotated bibliography (drowsiness detection SOTA / face reenactment / synthetic-fairness) — `phase0_scoping/annotated_bibliography.md`
 - [x] 0.2 Final dataset list verified live (27 Sep): UTA-RLDD, NTHU-DDD (official), YawDD, FFHQ, FairFace — `phase0_scoping/dataset_decision.md`
 - [x] 0.2 Licences reviewed and logged (FFHQ CC BY-NC-SA 4.0 → synthetic release must match; FairFace CC BY 4.0; NTHU no-redistribution)
-- [ ] 0.2 **UTA-RLDD downloaded** (direct, no form; 111.3 GB across 10 zips) ← blocks Phase 1.1 execution
+- [x] 0.2 **UTA-RLDD downloaded** (direct, no form; 111.3 GB across 10 zips)
 - [ ] 0.2 NTHU-DDD licence signed by HoD/lab director and emailed
 - [ ] 0.2 YawDD downloaded (IEEE DataPort, free account)
 - [ ] 0.2 FFHQ metadata + thumbnails downloaded; FairFace images/labels/model downloaded
@@ -40,12 +40,13 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [x] 1.1 (2026-11-17) `scripts/run_extraction.sh`: caps ffmpeg/OpenMP/BLAS at one thread per shard and staggers N shards (default 8). Uncapped, 16 shards exhaust the container's pids.max of 2048 on a 64-core box and die with `Could not open codec h264, error: -11`
 - [ ] 1.1 `subgroups.py` reads video through plain `cv2.VideoCapture`: move it to `video.OrientedVideo` before `extract-refs` runs on a build that ignores rotation
 - [ ] 1.1 **Self-check run on one real video** (`python -m src.selfcheck --video ...`) ← first thing to do once data lands
-- [ ] 1.1 Full extraction run over all 182 videos (180 recordings, two of them split in two)
+- [x] 1.1 Full extraction run over all 182 videos (180 recordings, two of them split in two). **Gate 3 passed:** mean PERCLOS80 rises 0.040 / 0.126 / 0.266 across alert / low vigilant / drowsy — `phase1_baseline/data/video_features.csv`
 - [ ] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check on age, gender presentation and glasses + blind ITA spot-check
 - [ ] 1.1 Class/subgroup balance table generated
 - [ ] 1.2 Architecture benchmark: CNN-hybrid vs YOLOv8-based vs ViT/Swin vs LSTM-temporal — `phase1_baseline/results/architecture_benchmark.csv`
 - [ ] 1.2 Baseline architecture selected + justification written
 - [x] 1.3 (2026-11-25) Baseline detector on per-video features: HGB + logistic reference, leave-one-fold-out over the 5 official folds with subject disjointness asserted, 5 seeds, subject-level bootstrap CIs. 3-class HGB 53.5 ± 1.5% accuracy [95% CI 48.0, 59.0], below the published 65.2% and the 57.8% human figure; binary alert-vs-drowsy 81.1 ± 0.6% [74.0, 87.9]. Per-seed rows in `results/detector_runs.csv` (gitignored, on the server) — `phase1_baseline/src/detector.py`
+- [x] 1.3 (2026-11-25) Window-level features (`aggregate --window-s`, alert-video baseline asserted per row, windows under 70% coverage dropped and counted per subject) and window-level detector with majority-vote video accuracy. Sweep 60/30/15/10 s: 3-class HGB video accuracy 62.9 / 61.1 / 57.4 / 58.4%, window macro F1 53.6 / 50.9 / 48.3 / 47.0%. See decision row — `phase1_baseline/results/detector_window_runs.csv`
 - [ ] 1.3 Per-subgroup F1 + bootstrap CIs computed (hook is `detector.subgroup_report`; waits on age_bracket, 5 of 60 filled)
 - [ ] 1.3 Gap metrics computed (max-min F1 gap, std dev, equalized-odds gap)
 - [ ] 1.3 Detection-rate-by-subgroup analysis (tracking failure is itself a fairness finding)
@@ -117,9 +118,9 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 | 2026-11-17 | One landmarker instance per video, not a timestamp offset carried across videos | An offset would satisfy MediaPipe's monotonic check but carry tracking state from one subject's video into the next; reloading the cached model costs a second or two per video. See `tests/test_extraction_run.py` | Fresh instance per video |
 | 2026-11-17 | Split recordings (`10_1`, `10_2`) kept as separate videos with a `part` column, not concatenated | Subject 49's halves are 270x480 and 162x288; joining them needs a re-encode that degrades the better half. Per-video features and subject-level folds both handle four videos per subject. See `tests/test_manifest.py::TestSplitRecordings` | Separate parts |
 | 2026-11-04 | Rotation is verified per video rather than left to cv2, and stored size is read with AUTO off | On opencv-python 5.0.0, AUTO defaults on and `CAP_PROP_FRAME_WIDTH` reports the rotated size, so predicting from it with AUTO on swaps twice and rotates again; other builds may ignore AUTO. Checked on MP4s with patched display matrices, no UTA-RLDD file was available | `phase1_baseline/src/video.py` |
+| 2026-11-25 | **Phase 2 clip length: 60 s.** Rule fixed before the sweep: shortest window whose 3-class HGB window macro F1 and majority-vote video accuracy (means over 5 seeds) are both within 2 points of the longest window | 60 s: F1 53.6, video acc 62.9 [95% CI 57.0, 68.3]. 30 s: 50.9 (−2.7, misses), 61.1 (−1.8). 15 s: 48.3, 57.4. 10 s: 47.0, 58.4. Window F1 falls monotonically with shorter windows, so nothing shorter than 60 s passes; the sweep stops at 60 s, so longer clips might do better still. 30 s is the near miss if generator limits force a shorter clip, at a 2.7-point window-F1 cost. Subject-level bootstrap CIs overlap across all four lengths — `phase1_baseline/results/detector_window_runs.csv` batch `20261125T065741Z-04b301` | 60 s |
 
 ## Blockers / Open Questions
-- **UTA-RLDD not yet downloaded.** 111.3 GB across 10 zips, direct from Google Drive, no form needed. Phase 1.1 code is written and tested but cannot run until this lands. Download one fold first and run the self-check on a single video before pulling the rest.
 - NTHU-DDD needs the licence **signed by department head or lab director**. Unanswered since the first email. DROZY and NITYMED are the fallbacks for the night-IR stress test; nothing in Phases 1 or 2 depends on NTHU.
 - Compute plan not yet fixed — determines whether Phase 2 uses a GAN pipeline only or can afford diffusion reenactment training too. Phase 1.1 extraction is CPU-only and runs overnight on a laptop.
 - Demographic annotation (1.1) needs a second annotator for the κ check. Who?

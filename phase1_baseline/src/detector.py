@@ -1,6 +1,7 @@
 """Phase 1.3 baseline detector on per-video features.
 
-    python -m src.detector                       # from phase1_baseline/
+    python -m src.detector                       # from phase1_baseline/, per video
+    python -m src.detector --windows data/window_features_w60_s30.csv ...   # per window
 
 Reads data/video_features.csv (one row per video), trains a gradient-boosted tree
 model and a logistic-regression reference with leave-one-fold-out over the five
@@ -154,9 +155,13 @@ def _check_split(train: pd.DataFrame, test: pd.DataFrame) -> None:
 def make_model(name: str, seed: int):
     if name == "hgb":
         # max_features < 1 subsamples columns per split. It regularises on 145
-        # training rows and is the only thing that makes the seed matter: with
-        # early stopping off (auto, n < 10000) HGB is otherwise deterministic.
-        return HistGradientBoostingClassifier(max_features=0.8, random_state=seed)
+        # training rows and is the only thing that makes the seed matter, since
+        # HGB is otherwise deterministic. Early stopping is off explicitly: its
+        # default ("auto") switches on above 10000 rows, which the 15 s and 10 s
+        # window tables cross, and it would hold out a random, not subject-level,
+        # slice of the training windows. Off, every table gets the same model.
+        return HistGradientBoostingClassifier(max_features=0.8, early_stopping=False,
+                                              random_state=seed)
     if name == "logreg":
         # lbfgs on a multiclass target is multinomial. It is deterministic, so
         # the five seeds give identical results; they are run anyway for a
@@ -199,6 +204,7 @@ def cross_validate(df: pd.DataFrame, task: str, model_name: str, seed: int) -> t
     y = data["class"].map({c: i for i, c in enumerate(labels)}).to_numpy()
     X = build_features(data)
     pred = np.full(len(data), -1)
+    proba = np.full((len(data), len(labels)), np.nan)
     elapsed, n_pred = 0.0, 0
     for fold in sorted(data["fold"].unique()):
         test = (data["fold"] == fold).to_numpy()
@@ -208,11 +214,18 @@ def cross_validate(df: pd.DataFrame, task: str, model_name: str, seed: int) -> t
         t0 = time.perf_counter()
         pred[test] = model.predict(X[test])
         elapsed += time.perf_counter() - t0
+        p = model.predict_proba(X[test])
+        proba[np.ix_(test, model.classes_)] = p
+        t0 = time.perf_counter()
+        elapsed += time.perf_counter() - t0
         n_pred += int(test.sum())
     if (pred < 0).any():
         raise RuntimeError("some videos received no out-of-fold prediction")
-    out = data[["video_id", "subject_id", "fold", "class"]].copy()
+    keep = [c for c in ("video_id", "subject_id", "fold", "class", "window_start_s") if c in data]
+    out = data[keep].copy()
     out["pred"] = [labels[i] for i in pred]
+    for i, c in enumerate(labels):
+        out[f"p_{c}"] = proba[:, i]
     return out, 1000.0 * elapsed / n_pred
 
 
@@ -237,17 +250,20 @@ def bootstrap_ci(pred: pd.DataFrame, labels, n_boot: int = 2000, seed: int = 0,
     """
     rng = np.random.default_rng(seed)
     labels = list(labels)
-    groups = {s: g for s, g in pred.groupby("subject_id")}
-    subjects = np.array(sorted(groups))
-    true_by = {s: g["class"].to_numpy() for s, g in groups.items()}
-    pred_by = {s: g["pred"].to_numpy() for s, g in groups.items()}
-    acc, f1 = np.empty(n_boot), np.empty(n_boot)
-    for b in range(n_boot):
-        draw = rng.choice(subjects, size=len(subjects), replace=True)
-        t = np.concatenate([true_by[s] for s in draw])
-        p = np.concatenate([pred_by[s] for s in draw])
-        acc[b] = np.mean(t == p)
-        f1[b] = f1_score(t, p, labels=labels, average="macro", zero_division=0)
+    subjects = sorted(pred["subject_id"].unique())
+    # One confusion matrix per subject; a resample is the sum of the drawn ones.
+    # Exact, and fast enough for 20000-window tables.
+    cms = np.stack([confusion_matrix(g["class"], g["pred"], labels=labels)
+                    for _, g in pred.groupby("subject_id", sort=True)])
+    draws = rng.integers(0, len(subjects), size=(n_boot, len(subjects)))
+    counts = np.stack([np.bincount(d, minlength=len(subjects)) for d in draws])
+    cm = np.einsum("bs,sij->bij", counts, cms).astype(float)
+    tp = np.einsum("bii->bi", cm)
+    fp, fn = cm.sum(axis=1) - tp, cm.sum(axis=2) - tp
+    denom = 2 * tp + fp + fn
+    f1_per = np.divide(2 * tp, denom, out=np.zeros_like(tp), where=denom > 0)
+    acc = tp.sum(axis=1) / cm.sum(axis=(1, 2))
+    f1 = f1_per.mean(axis=1)
     lo, hi = 100 * alpha / 2, 100 * (1 - alpha / 2)
     return {"accuracy_ci": tuple(np.percentile(acc, [lo, hi])),
             "macro_f1_ci": tuple(np.percentile(f1, [lo, hi]))}
@@ -472,6 +488,195 @@ def _print_summary(summary, batch_id, n_boot, results_dir) -> None:
         print(f"\nAppended to {results_dir / 'detector_runs.csv'} and detector_predictions.csv")
 
 
+# ------------------------------------------------------------------ windows
+# Window-level path. Each row is one fixed-length window of a video, built by
+# `aggregate --window-s`. Training and evaluation are on windows, still
+# leave-one-fold-out with the same subject checks; video-level accuracy comes
+# from a majority vote over each video's held-out windows, for comparison with
+# the published 65.2%. Phase 2 needs this path: generated clips are short, and
+# a detector that only reads whole-video rows cannot take them in.
+
+# Chosen before the sweep was run: the shortest window whose 3-class HGB
+# window-level macro F1 AND video-level accuracy (means over seeds) are both
+# within this many points of the longest window's.
+WINDOW_TOLERANCE = 0.02
+
+WINDOW_RUN_COLUMNS = [
+    "run_id", "batch_id", "timestamp", "git_commit", "input_file", "task", "model", "seed",
+    "mix_ratio", "window_s", "stride_s", "n_windows", "n_videos", "n_subjects", "features",
+    "subgroup_metadata_version",
+    "window_accuracy", "window_macro_f1", "window_macro_f1_ci_lo", "window_macro_f1_ci_hi",
+    "window_f1_alert", "window_f1_low_vigilant", "window_f1_drowsy", "window_confusion_matrix",
+    "video_accuracy", "video_accuracy_ci_lo", "video_accuracy_ci_hi",
+    "video_macro_f1", "video_macro_f1_ci_lo", "video_macro_f1_ci_hi",
+    "video_f1_alert", "video_f1_low_vigilant", "video_f1_drowsy", "video_confusion_matrix",
+    "confusion_labels", "per_subgroup_f1", "max_min_subgroup_gap",
+    "latency_ms_per_window", "n_boot",
+]
+VOTE_COLUMNS = ["run_id", "task", "model", "seed", "window_s", "video_id", "subject_id",
+                "fold", "class", "pred", "n_windows"]
+
+
+def video_vote(pred: pd.DataFrame, labels) -> pd.DataFrame:
+    """One prediction per video: the most common window label.
+
+    Ties go to the tied label with the highest mean predicted probability over
+    the video's windows, so the result does not depend on label order.
+    """
+    labels = list(labels)
+    rows = []
+    for vid, g in pred.groupby("video_id", sort=True):
+        counts = g["pred"].value_counts().reindex(labels, fill_value=0)
+        tied = counts[counts == counts.max()].index.tolist()
+        winner = tied[0] if len(tied) == 1 else max(tied, key=lambda c: g[f"p_{c}"].mean())
+        rows.append({"video_id": vid, "subject_id": g["subject_id"].iloc[0],
+                     "fold": g["fold"].iloc[0], "class": g["class"].iloc[0],
+                     "pred": winner, "n_windows": len(g)})
+    return pd.DataFrame(rows)
+
+
+def load_windows(path: Path) -> pd.DataFrame:
+    if not Path(path).exists():
+        raise FileNotFoundError(
+            f"{path} not found. Build it with `python -m src.aggregate --manifest "
+            "data/manifest.csv --window-s ...`; no results are produced without real data.")
+    df = pd.read_csv(path, dtype={"subject_id": str, "video_id": str})
+    if "window_s" not in df or df["window_s"].nunique() != 1:
+        raise ValueError(f"{path} is not a single-length window table")
+    return df
+
+
+def choose_window(table: pd.DataFrame, tolerance: float = WINDOW_TOLERANCE) -> pd.Series:
+    """Shortest window within `tolerance` of the longest on both criteria.
+
+    `table` has one row per window length with mean window_macro_f1 and
+    video_accuracy (3-class HGB). The longest window always qualifies.
+    """
+    ref = table.loc[table["window_s"].idxmax()]
+    ok = table[(table["window_macro_f1"] >= ref["window_macro_f1"] - tolerance)
+               & (table["video_accuracy"] >= ref["video_accuracy"] - tolerance)]
+    return ok.loc[ok["window_s"].idxmin()]
+
+
+def run_windows(window_paths, annotations_path=DEFAULT_ANNOTATIONS,
+                results_dir=DEFAULT_RESULTS, seeds=(0, 1, 2, 3, 4), n_boot=2000,
+                tasks=("3class", "binary"), models=MODELS, log=True) -> pd.DataFrame:
+    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
+    commit = _git_commit()
+    results_dir = Path(results_dir)
+    run_rows, vote_rows, summary = [], [], []
+
+    for path in window_paths:
+        df = load_windows(path)
+        assert_subject_level_folds(df)
+        window_s, stride_s = float(df["window_s"].iloc[0]), float(df["stride_s"].iloc[0])
+        for task in tasks:
+            labels = CLASSES[task]
+            for model_name in models:
+                per_seed, win_preds, votes = [], [], []
+                for seed in seeds:
+                    pred, latency = cross_validate(df, task, model_name, seed)
+                    vote = video_vote(pred, labels)
+                    wm = compute_metrics(pred["class"], pred["pred"], labels)
+                    vm = compute_metrics(vote["class"], vote["pred"], labels)
+                    wci = bootstrap_ci(pred, labels, n_boot=n_boot, seed=seed)
+                    vci = bootstrap_ci(vote, labels, n_boot=n_boot, seed=seed)
+                    sub = subgroup_report(vote, annotations_path, labels)
+                    run_id = f"{batch_id}-w{window_s:g}-{task}-{model_name}-s{seed}"
+                    run_rows.append({
+                        "run_id": run_id, "batch_id": batch_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "git_commit": commit, "input_file": Path(path).name, "task": task,
+                        "model": model_name, "seed": seed, "mix_ratio": 0.0,
+                        "window_s": window_s, "stride_s": stride_s, "n_windows": len(pred),
+                        "n_videos": len(vote), "n_subjects": vote.subject_id.nunique(),
+                        "features": ";".join(FEATURES),
+                        "subgroup_metadata_version": sub.metadata_version,
+                        "window_accuracy": wm["accuracy"], "window_macro_f1": wm["macro_f1"],
+                        "window_macro_f1_ci_lo": wci["macro_f1_ci"][0],
+                        "window_macro_f1_ci_hi": wci["macro_f1_ci"][1],
+                        **{f"window_f1_{c}": wm[f"f1_{c}"] for c in labels},
+                        "window_confusion_matrix": json.dumps(wm["confusion"]),
+                        "video_accuracy": vm["accuracy"],
+                        "video_accuracy_ci_lo": vci["accuracy_ci"][0],
+                        "video_accuracy_ci_hi": vci["accuracy_ci"][1],
+                        "video_macro_f1": vm["macro_f1"],
+                        "video_macro_f1_ci_lo": vci["macro_f1_ci"][0],
+                        "video_macro_f1_ci_hi": vci["macro_f1_ci"][1],
+                        **{f"video_f1_{c}": vm[f"f1_{c}"] for c in labels},
+                        "video_confusion_matrix": json.dumps(vm["confusion"]),
+                        "confusion_labels": ";".join(labels),
+                        "per_subgroup_f1": (sub.table.to_json(orient="records") if sub.ready
+                                            else sub.message),
+                        "max_min_subgroup_gap": json.dumps(sub.gaps) if sub.ready else "",
+                        "latency_ms_per_window": latency, "n_boot": n_boot,
+                    })
+                    vote_rows.extend(vote.assign(run_id=run_id, task=task, model=model_name,
+                                                 seed=seed, window_s=window_s).to_dict("records"))
+                    per_seed.append((wm, vm))
+                    win_preds.append(pred)
+                    votes.append(vote)
+                wci = bootstrap_ci(pd.concat(win_preds), labels, n_boot=n_boot, seed=0)
+                vci = bootstrap_ci(pd.concat(votes), labels, n_boot=n_boot, seed=0)
+                row = {"window_s": window_s, "stride_s": stride_s, "task": task,
+                       "model": model_name, "n_windows": len(win_preds[0]),
+                       "n_videos": len(votes[0]),
+                       "window_macro_f1_ci": wci["macro_f1_ci"],
+                       "video_accuracy_ci": vci["accuracy_ci"],
+                       "subgroup": subgroup_report(pd.concat(votes), annotations_path, labels)}
+                for key, idx, metric in [("window_macro_f1", 0, "macro_f1"),
+                                         ("video_accuracy", 1, "accuracy"),
+                                         ("video_macro_f1", 1, "macro_f1")]:
+                    vals = np.array([m[idx][metric] for m in per_seed])
+                    row[key] = vals.mean()
+                    row[key + "_sd"] = vals.std(ddof=1) if len(vals) > 1 else 0.0
+                summary.append(row)
+                print(f"  done: {window_s:g}s {task} {model_name}", file=sys.stderr)
+
+    if log:
+        append_csv(results_dir / "detector_window_runs.csv", run_rows, WINDOW_RUN_COLUMNS)
+        append_csv(results_dir / "detector_window_votes.csv", vote_rows, VOTE_COLUMNS)
+    table = pd.DataFrame(summary)
+    _print_window_summary(table, batch_id, n_boot, results_dir if log else None)
+    return table
+
+
+def _print_window_summary(table: pd.DataFrame, batch_id: str, n_boot: int, results_dir) -> None:
+    print(f"\nPhase 1.3 window-length sweep, batch {batch_id}")
+    print("Leave-one-fold-out over the 5 official folds, subject-disjoint (asserted). "
+          "Video label = majority vote over the video's windows.")
+    print(f"Mean ± sd over seeds; [95% CI] from {n_boot} subject-level bootstrap resamples.\n")
+    for task in CLASSES:
+        for model in sorted(table["model"].unique()):
+            t = table[(table.task == task) & (table.model == model)].sort_values(
+                "window_s", ascending=False)
+            if t.empty:
+                continue
+            print(f"== {task}, {model}")
+            print(f"{'window':>7} {'stride':>7} {'windows':>8} "
+                  f"{'window macro F1 %':>28} {'video accuracy %':>28} {'video macro F1 %':>17}")
+            for _, r in t.iterrows():
+                print(f"{r.window_s:6g}s {r.stride_s:6g}s {r.n_windows:8d} "
+                      f"{_fmt(r.window_macro_f1, r.window_macro_f1_sd, r.window_macro_f1_ci):>28} "
+                      f"{_fmt(r.video_accuracy, r.video_accuracy_sd, r.video_accuracy_ci):>28} "
+                      f"{_fmt(r.video_macro_f1, r.video_macro_f1_sd):>17}")
+            if task == "3class":
+                print(f"{'ref':>7} published baseline {100 * PUBLISHED_BASELINE_ACC:.1f}% video "
+                      f"accuracy, human observers {100 * HUMAN_OBSERVER_ACC:.1f}%")
+            print()
+    main = table[(table.task == "3class") & (table.model == "hgb")]
+    if len(main) > 1:
+        pick = choose_window(main)
+        ref = main.loc[main["window_s"].idxmax()]
+        print(f"Shortest window within {100 * WINDOW_TOLERANCE:.0f} points of the "
+              f"{ref.window_s:g}s window on both window macro F1 and video accuracy "
+              f"(3-class HGB): {pick.window_s:g}s")
+    sub = table["subgroup"].iloc[0]
+    print(f"Per-subgroup breakdown: {sub.message if not sub.ready else 'see detector_window_runs.csv'}")
+    if results_dir is not None:
+        print(f"Appended to {results_dir / 'detector_window_runs.csv'} and detector_window_votes.csv")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--features", type=Path, default=DEFAULT_FEATURES)
@@ -479,10 +684,18 @@ def main(argv=None) -> int:
     p.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     p.add_argument("--n-boot", type=int, default=2000)
+    p.add_argument("--windows", type=Path, nargs="+", default=None,
+                   help="window-level mode: one or more window_features_*.csv tables; "
+                        "several make a window-length sweep")
     p.add_argument("--no-log", action="store_true", help="print only, append nothing")
     a = p.parse_args(argv)
     try:
-        run(a.features, a.annotations, a.results_dir, tuple(a.seeds), a.n_boot, log=not a.no_log)
+        if a.windows:
+            run_windows(a.windows, a.annotations, a.results_dir, tuple(a.seeds), a.n_boot,
+                        log=not a.no_log)
+        else:
+            run(a.features, a.annotations, a.results_dir, tuple(a.seeds), a.n_boot,
+                log=not a.no_log)
     except FileNotFoundError as e:
         print(e, file=sys.stderr)
         return 2
