@@ -153,3 +153,9 @@ conda, since libgl1 also comes from apt. Run `src.selfcheck` to confirm a real l
 
 Check `torch.cuda.is_available()` before assuming GPU; a CPU-only torch on a GPU server is a
 common and quiet mistake.
+
+`torch.cuda.is_available()` returning True does not mean the build can run on this GPU. The
+V100s are sm_70, and the cu128 wheels of torch 2.11 ship no sm_70 kernels: `is_available()` is True
+and the first kernel fails. Check `torch.cuda.get_arch_list()` contains `sm_70` and run one real
+kernel (`phase2_generator/gen/check_torch.py`). Phase 2 uses `phase2_generator/.venv` with
+`torch 2.11.0+cu126`; the `drowsy` env (Phase 1, CPU-only) keeps its cu128 build untouched.

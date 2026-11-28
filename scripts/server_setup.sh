@@ -6,7 +6,8 @@
 # Run scripts/server_survey.sh first. Writes setup_report.txt.
 #
 # Creates a conda env named `drowsy` with python 3.11, installs the project
-# requirements, installs a torch build matching this server's CUDA, and runs
+# requirements, installs a torch wheel the driver's CUDA can run (see the torch section:
+# that does not guarantee kernels for the GPU's architecture), and runs
 # the test suite. Nothing outside the conda env and this repo is touched.
 
 set -uo pipefail
@@ -43,7 +44,14 @@ fi
 conda activate "$ENV_NAME" || { say "ERROR: could not activate $ENV_NAME"; exit 1; }
 say "python: $(python --version 2>&1)  at $(command -v python)"
 
-# --------------------------------------------------- torch matching CUDA
+# ------------------------------------------- torch wheel for the driver's CUDA
+# This picks a wheel the DRIVER can run (its CUDA version >= the wheel's). It says
+# nothing about whether the wheel ships kernels for this GPU's ARCHITECTURE, and that
+# is what broke on the V100s: driver CUDA 13.0 selects cu128, and the cu128 wheels of
+# torch 2.11 have no sm_70 kernels. torch.cuda.is_available() still returns True; the
+# first real kernel fails with "no kernel image is available". The verification step
+# below checks the arch list and runs a kernel. On Volta, use cu126 (2.11.0+cu126 ships
+# sm_70, checked 2026-11-28).
 say ""
 say "=== torch ==="
 CUDA_VER=""
@@ -108,6 +116,17 @@ try:
         for i in range(torch.cuda.device_count()):
             p = torch.cuda.get_device_properties(i)
             print(f"          gpu {i}        {p.name}, {p.total_memory/1e9:.1f} GB")
+        cap = torch.cuda.get_device_capability(0)
+        need = f"sm_{cap[0]}{cap[1]}"
+        arch = torch.cuda.get_arch_list()
+        print(f"          arch list    {arch}")
+        if need not in arch:
+            print(f"          >>> this wheel has no {need} kernels: is_available() is True but")
+            print(f"          >>> nothing will run on this GPU. Install a build whose arch list has {need}.")
+        else:
+            x = torch.randn(256, 256, device="cuda", dtype=torch.float16)
+            (x @ x).sum().item()
+            print(f"          fp16 kernel  ok on {need}")
     else:
         print("          >>> torch cannot see a GPU. If this server has one,")
         print("          >>> the wrong wheel was installed. Do not train yet.")

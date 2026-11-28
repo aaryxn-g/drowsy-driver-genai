@@ -1,0 +1,4 @@
+.venv/
+external/
+logs/
+pilot/driving/*.mp4
