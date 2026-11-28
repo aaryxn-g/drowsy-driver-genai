@@ -182,6 +182,11 @@ a majority vote over each video's windows. Results are appended to
 
 ---
 
+## Subgroup audit (Phase 1.3)
+
+`python -m src.audit` (add `--skin-tone-reliable-only` or `--ita-covariates`). Results and
+interpretation: [`subgroup_audit.md`](subgroup_audit.md).
+
 ## Subgroup annotation
 
 Run this once the dataset is on disk. It needs only each subject's alert video.

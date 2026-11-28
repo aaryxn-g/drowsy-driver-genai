@@ -35,6 +35,8 @@ from .detector import (CLASSES, DEFAULT_ANNOTATIONS, DEFAULT_RESULTS, MIN_SUBJEC
 DEFAULT_VOTES = DEFAULT_RESULTS / "detector_window_votes.csv"
 DEFAULT_WINDOWS = REPO / "data" / "window_features_w60_s30.csv"
 DEFAULT_VIDEO_FEATURES = REPO / "data" / "video_features.csv"
+DEFAULT_ITA = REPO / "data" / "subgroup_ita.csv"
+DEFAULT_MANIFEST = REPO / "data" / "manifest.csv"
 DEFAULT_BATCH = "20261125T065741Z-04b301"  # the window sweep behind the 60 s decision
 
 UNKNOWN = "unknown"
@@ -149,13 +151,17 @@ def _f1_acc(cm: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def audit(votes: pd.DataFrame, groups: pd.DataFrame, videos: pd.DataFrame,
-          windows: pd.DataFrame, labels, n_boot: int = 2000, seed: int = 0) -> pd.DataFrame:
+          windows: pd.DataFrame, labels, n_boot: int = 2000, seed: int = 0,
+          axes: dict[str, str] | None = None) -> pd.DataFrame:
     """One row per (axis, group), plus the axis gap repeated on every row of that axis.
 
     Every bootstrap draw resamples subjects with replacement inside each group, so group
     sizes stay fixed and one subject's videos, seeds and windows move together. The gap
     CI uses the same per-group draws, so it reflects the joint uncertainty.
+
+    `axes` maps a column of `groups` to the axis name reported; default all of COLLAPSE.
     """
+    axes = axes or {a: a for a in COLLAPSE}
     labels = list(labels)
     unknown_subjects = set(votes.subject_id) - set(groups.subject_id)
     if unknown_subjects:
@@ -171,9 +177,9 @@ def audit(votes: pd.DataFrame, groups: pd.DataFrame, videos: pd.DataFrame,
     win = windows.set_index("subject_id")
 
     rows = []
-    for axis in COLLAPSE:
+    for col, axis in axes.items():
         boot_f1, boot_acc, axis_rows = {}, {}, []
-        for group, gsub in groups.groupby(axis):
+        for group, gsub in groups.groupby(col):
             subj = sorted(set(gsub.subject_id) & set(cms))
             n = len(subj)
             cm = np.stack([cms[s] for s in subj])
@@ -233,6 +239,74 @@ def audit(votes: pd.DataFrame, groups: pd.DataFrame, videos: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
+RELIABLE_AXIS = "skin_tone_ita_reliable"
+
+
+def reliable_subset(ann: pd.DataFrame) -> set[str]:
+    """Subjects whose ITA measurement passed every reliability check."""
+    flag = ann["ita_reliable"].astype(str).str.strip().str.lower()
+    bad = ~flag.isin(["true", "false"])
+    if bad.any():
+        raise AuditInputError(f"ita_reliable is not True/False for subjects "
+                              f"{sorted(ann.subject_id[bad])}")
+    return set(ann.subject_id.astype(str).str.strip()[flag == "true"])
+
+
+# ------------------------------------------------------------------ ITA covariates
+def ita_covariates(ita: pd.DataFrame, manifest: pd.DataFrame,
+                   video_features: pd.DataFrame) -> pd.DataFrame:
+    """Per-subject table: ITA and the recording conditions it was measured under.
+
+    Reference frames come from the alert video (`subgroups.extract_refs`), so quality
+    covariates are that video's. Subjects without an ITA value are left out here, not
+    imputed.
+    """
+    ita = ita.assign(subject_id=ita.subject_id.astype(str).str.strip())
+    lcols = [c for c in ita.columns if c.startswith("l_star_")]
+    per = pd.DataFrame({"subject_id": ita.subject_id, "ita_median": ita.ita_median,
+                        "l_star_mean": ita[lcols].mean(axis=1, skipna=True)})
+    alert = manifest[manifest["class"] == "alert"]
+    if alert.subject_id.duplicated().any():
+        raise AuditInputError("a subject has more than one alert video")
+    alert = alert.assign(
+        short_side=alert[["effective_width", "effective_height"]].min(axis=1),
+        rotated=(alert.rotation_deg.fillna(0) % 360 != 0).astype(int))
+    vf = video_features.set_index("video_id")["detection_rate"]
+    alert = alert.assign(detection_rate_alert=alert.video_id.map(vf))
+    det_all = video_features.groupby("subject_id")["detection_rate"].mean().rename(
+        "detection_rate_all")
+    per = (per.merge(alert[["subject_id", "bitrate_kbps", "short_side", "rotated",
+                            "detection_rate_alert"]], on="subject_id", how="left")
+           .merge(det_all, left_on="subject_id", right_index=True, how="left"))
+    return per[per.ita_median.notna()]
+
+
+COVARIATES = ("l_star_mean", "bitrate_kbps", "short_side", "detection_rate_alert",
+              "detection_rate_all", "rotated")
+
+
+def covariate_correlations(per: pd.DataFrame) -> pd.DataFrame:
+    from scipy.stats import pearsonr, spearmanr
+    rows = []
+    for c in COVARIATES:
+        d = per[["ita_median", c]].dropna()
+        rho, p_rho = spearmanr(d.ita_median, d[c])
+        r, p_r = pearsonr(d.ita_median, d[c])
+        rows.append({"covariate": c, "n_subjects": len(d), "spearman_rho": rho,
+                     "spearman_p": p_rho, "pearson_r": r, "pearson_p": p_r})
+    return pd.DataFrame(rows)
+
+
+COVARIATE_COLUMNS = ["run_id", "audit_batch_id", "timestamp", "git_commit",
+                     "subgroup_metadata_version", "covariate", "n_subjects", "spearman_rho",
+                     "spearman_p", "pearson_r", "pearson_p", "notes"]
+COVARIATE_NOTES = {
+    "l_star_mean": "ITA = atan((L*-50)/b*), so ITA rises with L* by construction; "
+                   "this cannot separate skin lightness from exposure",
+    "rotated": "point-biserial: 1 = alert video carries a container rotation flag",
+}
+
+
 # ------------------------------------------------------------------ main
 def _ci(v, lo, hi, pct=True) -> str:
     k = 100 if pct else 1
@@ -270,7 +344,8 @@ def print_tables(table: pd.DataFrame, header: str) -> None:
 def run(votes_path=DEFAULT_VOTES, annotations_path=DEFAULT_ANNOTATIONS,
         windows_path=DEFAULT_WINDOWS, video_features_path=DEFAULT_VIDEO_FEATURES,
         results_dir=DEFAULT_RESULTS, batch_id=DEFAULT_BATCH, window_s=60.0, task="3class",
-        model="hgb", n_boot=2000, seed=0, log=True) -> pd.DataFrame:
+        model="hgb", n_boot=2000, seed=0, log=True,
+        skin_tone_reliable_only=False) -> pd.DataFrame:
     for p in (votes_path, annotations_path, windows_path, video_features_path):
         if not Path(p).exists():
             raise FileNotFoundError(f"{p} not found; no audit is produced without real data")
@@ -279,8 +354,18 @@ def run(votes_path=DEFAULT_VOTES, annotations_path=DEFAULT_ANNOTATIONS,
     ann = pd.read_csv(annotations_path, dtype=str)
     groups = collapse_labels(ann)
     videos, windows = tracking_by_subject(Path(windows_path), Path(video_features_path))
+    axes, scope = None, "all subjects"
+    if skin_tone_reliable_only:
+        keep = reliable_subset(ann)
+        votes = votes[votes.subject_id.isin(keep)]
+        groups = groups[groups.subject_id.isin(keep)]
+        axes = {"skin_tone": RELIABLE_AXIS}
+        scope = f"skin tone only, {len(keep)} subjects with ita_reliable = True"
     videos = videos[videos.subject_id.isin(votes.subject_id)]
-    table = audit(votes, groups, videos, windows, labels, n_boot=n_boot, seed=seed)
+    table = audit(votes, groups, videos, windows, labels, n_boot=n_boot, seed=seed, axes=axes)
+    if skin_tone_reliable_only:
+        table["notes"] = [f"{n}; sensitivity: ita_reliable subjects only" if n
+                          else "sensitivity: ita_reliable subjects only" for n in table["notes"]]
 
     audit_batch = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
     seeds = sorted(int(s) for s in votes.seed.unique())
@@ -292,7 +377,8 @@ def run(votes_path=DEFAULT_VOTES, annotations_path=DEFAULT_ANNOTATIONS,
             "subgroup_metadata_version": _file_version(Path(annotations_path)), "n_boot": n_boot}
     table = table.assign(**meta)
     header = (f"Phase 1.3 subgroup audit {audit_batch}: {window_s:g}s windows, {task} {model}, "
-              f"majority vote per video, source batch {batch_id}, seeds {seeds} pooled.\n"
+              f"majority vote per video, source batch {batch_id}, seeds {seeds} pooled; "
+              f"{scope}.\n"
               f"Annotations {meta['subgroup_metadata_version']}. 95% CIs from {n_boot} "
               "bootstrap resamples of subjects within each group.")
     print_tables(table, header)
@@ -301,6 +387,37 @@ def run(votes_path=DEFAULT_VOTES, annotations_path=DEFAULT_ANNOTATIONS,
         append_csv(out, table.to_dict("records"), AUDIT_COLUMNS)
         print(f"\nAppended {len(table)} rows to {out}")
     return table
+
+
+def run_covariates(annotations_path=DEFAULT_ANNOTATIONS, ita_path=DEFAULT_ITA,
+                   manifest_path=DEFAULT_MANIFEST, video_features_path=DEFAULT_VIDEO_FEATURES,
+                   results_dir=DEFAULT_RESULTS, log=True) -> pd.DataFrame:
+    for p in (annotations_path, ita_path, manifest_path, video_features_path):
+        if not Path(p).exists():
+            raise FileNotFoundError(f"{p} not found; no correlations without real data")
+    ita = pd.read_csv(ita_path, dtype={"subject_id": str})
+    manifest = pd.read_csv(manifest_path, dtype={"subject_id": str, "video_id": str})
+    vf = pd.read_csv(video_features_path, dtype={"subject_id": str, "video_id": str})
+    per = ita_covariates(ita, manifest, vf)
+    corr = covariate_correlations(per)
+    batch = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
+    corr = corr.assign(
+        run_id=[f"{batch}-{c}" for c in corr.covariate], audit_batch_id=batch,
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        git_commit=_git_commit(),
+        subgroup_metadata_version=_file_version(Path(annotations_path)),
+        notes=corr.covariate.map(COVARIATE_NOTES).fillna(""))
+    print(f"ITA covariate correlations {batch}, {len(per)} subjects with an ITA value; "
+          "quality covariates from the alert video (where reference frames are taken)")
+    print(f"{'covariate':<22} {'n':>3} {'Spearman rho':>13} {'p':>9} {'Pearson r':>10} {'p':>9}")
+    for _, r in corr.iterrows():
+        print(f"{r.covariate:<22} {r.n_subjects:3d} {r.spearman_rho:13.2f} {r.spearman_p:9.2g} "
+              f"{r.pearson_r:10.2f} {r.pearson_p:9.2g}")
+    if log:
+        out = Path(results_dir) / "ita_covariates.csv"
+        append_csv(out, corr.to_dict("records"), COVARIATE_COLUMNS)
+        print(f"\nAppended {len(corr)} rows to {out}")
+    return corr
 
 
 def main(argv=None) -> int:
@@ -316,10 +433,19 @@ def main(argv=None) -> int:
     p.add_argument("--model", default="hgb")
     p.add_argument("--n-boot", type=int, default=2000)
     p.add_argument("--no-log", action="store_true")
+    p.add_argument("--skin-tone-reliable-only", action="store_true",
+                   help="sensitivity check: skin-tone axis on ita_reliable subjects only")
+    p.add_argument("--ita-covariates", action="store_true",
+                   help="correlate ita_median with exposure, quality and tracking instead")
     a = p.parse_args(argv)
     try:
-        run(a.votes, a.annotations, a.windows, a.video_features, a.results_dir, a.batch,
-            a.window_s, a.task, a.model, a.n_boot, log=not a.no_log)
+        if a.ita_covariates:
+            run_covariates(a.annotations, video_features_path=a.video_features,
+                           results_dir=a.results_dir, log=not a.no_log)
+        else:
+            run(a.votes, a.annotations, a.windows, a.video_features, a.results_dir, a.batch,
+                a.window_s, a.task, a.model, a.n_boot, log=not a.no_log,
+                skin_tone_reliable_only=a.skin_tone_reliable_only)
     except (FileNotFoundError, AuditInputError) as e:
         print(e, file=sys.stderr)
         return 1

@@ -93,3 +93,41 @@ def test_predictions_without_annotation_raise():
     windows = pd.DataFrame({"subject_id": ["99"], "kept": 1, "dropped": 0})
     with pytest.raises(audit.AuditInputError, match="99"):
         audit.audit(votes, groups, videos, windows, LABELS, n_boot=10)
+
+
+def test_reliable_subset_refuses_unparseable_flags():
+    a = annotations().assign(ita_reliable=["True", "False"] * 6)
+    assert audit.reliable_subset(a) == {f"{i:02d}" for i in range(0, 12, 2)}
+    a.loc[3, "ita_reliable"] = "maybe"
+    with pytest.raises(audit.AuditInputError, match="03"):
+        audit.reliable_subset(a)
+
+
+def test_audit_axes_restricts_and_renames():
+    groups = audit.collapse_labels(annotations())
+    votes = votes_for(groups.subject_id.tolist(), lambda s: True)
+    videos = votes.drop_duplicates("video_id")[["video_id", "subject_id"]].assign(detection_rate=1.0)
+    windows = pd.DataFrame({"subject_id": groups.subject_id, "kept": 1, "dropped": 0})
+    t = audit.audit(votes, groups, videos, windows, LABELS, n_boot=10,
+                    axes={"skin_tone": audit.RELIABLE_AXIS})
+    assert set(t.axis) == {audit.RELIABLE_AXIS}
+
+
+def test_ita_covariates_use_the_alert_video_and_skip_missing_ita():
+    ita = pd.DataFrame({"subject_id": ["01", "02", "03"], "ita_median": [40.0, -40.0, None],
+                        "l_star_0": [70.0, 40.0, None], "l_star_1": [72.0, None, None]})
+    manifest = pd.DataFrame({
+        "video_id": ["01_0", "01_10", "02_0", "02_10", "03_0"],
+        "subject_id": ["01", "01", "02", "02", "03"],
+        "class": ["alert", "drowsy", "alert", "drowsy", "alert"],
+        "bitrate_kbps": [9000, 1, 3000, 1, 5000],
+        "effective_width": [720, 1, 1080, 1, 720], "effective_height": [1280, 1, 1920, 1, 1280],
+        "rotation_deg": [0, 0, 90, 0, 0]})
+    vf = pd.DataFrame({"video_id": manifest.video_id, "subject_id": manifest.subject_id,
+                       "detection_rate": [1.0, 0.5, 0.9, 0.7, 1.0]})
+    per = audit.ita_covariates(ita, manifest, vf).set_index("subject_id")
+    assert list(per.index) == ["01", "02"]
+    assert per.loc["01", "l_star_mean"] == 71.0 and per.loc["02", "l_star_mean"] == 40.0
+    assert per.loc["01", "bitrate_kbps"] == 9000 and per.loc["02", "short_side"] == 1080
+    assert per.loc["02", "rotated"] == 1 and per.loc["01", "detection_rate_alert"] == 1.0
+    assert per.loc["01", "detection_rate_all"] == 0.75

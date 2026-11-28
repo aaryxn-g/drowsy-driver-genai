@@ -136,6 +136,9 @@ Phase 1.3 baseline detector (`src/detector.py`), leave-one-fold-out, subject-lev
 Results live in `phase1_baseline/results/*.csv`, tracked in git, appended never overwritten.
 Subgroup audit done 2026-11-28 (`src/audit.py`, `results/subgroup_audit.csv`), collapse rules fixed
 beforehand: max-min macro F1 gap 11.1 points on skin tone, 9.6 on age, all CIs wide and overlapping.
+On ITA-reliable subjects only the skin-tone gap is 6.5. ITA is independent of video quality
+and tracking, but its exposure confound cannot be tested yet. Writeup: `phase1_baseline/subgroup_audit.md`.
+Phase 4 primary endpoint is fixed: the paired change in skin-tone gap (tracker, 2026-11-28).
 Annotator 2 / κ and the ITA spot-check are still outstanding.
 
 If data is not present under the configured dataset root, say so and stop rather than
