@@ -3,7 +3,7 @@
 Read automatically at the start of a session in this repo. Keep it current: it is how a
 fresh session picks up context instantly.
 
-Last updated 2026-11-25.
+Last updated 2026-11-28.
 
 ## What this project is
 
@@ -57,6 +57,7 @@ in `phase1_baseline/README.md`.
 | `selfcheck.py` | validates the landmarker on one real video |
 | `subgroups.py` | reference frames, ITA and annotation sheets; never guesses human labels |
 | `detector.py` | Phase 1.3 baseline detector, per video or per window, leave-one-fold-out |
+| `audit.py` | Phase 1.3 subgroup audit on logged votes: fixed collapse rules, accuracy and tracking per group |
 
 `python -m pytest tests -q` from `phase1_baseline/` should pass clean. If it does not, fix
 that before anything else.
@@ -133,7 +134,9 @@ Phase 1.3 baseline detector (`src/detector.py`), leave-one-fold-out, subject-lev
   row 2026-11-25 in the tracker)
 
 Results live in `phase1_baseline/results/*.csv`, tracked in git, appended never overwritten.
-Per-subgroup F1 waits on the annotation pass (age_bracket 5 of 60 filled).
+Subgroup audit done 2026-11-28 (`src/audit.py`, `results/subgroup_audit.csv`), collapse rules fixed
+beforehand: max-min macro F1 gap 11.1 points on skin tone, 9.6 on age, all CIs wide and overlapping.
+Annotator 2 / κ and the ITA spot-check are still outstanding.
 
 If data is not present under the configured dataset root, say so and stop rather than
 producing placeholder numbers.

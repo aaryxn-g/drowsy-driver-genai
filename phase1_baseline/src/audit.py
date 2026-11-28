@@ -283,7 +283,7 @@ def run(votes_path=DEFAULT_VOTES, annotations_path=DEFAULT_ANNOTATIONS,
     table = audit(votes, groups, videos, windows, labels, n_boot=n_boot, seed=seed)
 
     audit_batch = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
-    seeds = sorted(votes.seed.unique())
+    seeds = sorted(int(s) for s in votes.seed.unique())
     table.insert(0, "run_id", [f"{audit_batch}-{a}-{g}" for a, g in zip(table.axis, table.group)])
     meta = {"audit_batch_id": audit_batch,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),

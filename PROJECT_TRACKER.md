@@ -41,15 +41,15 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 - [ ] 1.1 `subgroups.py` reads video through plain `cv2.VideoCapture`: move it to `video.OrientedVideo` before `extract-refs` runs on a build that ignores rotation
 - [ ] 1.1 **Self-check run on one real video** (`python -m src.selfcheck --video ...`) ← first thing to do once data lands
 - [x] 1.1 Full extraction run over all 182 videos (180 recordings, two of them split in two). **Gate 3 passed:** mean PERCLOS80 rises 0.040 / 0.126 / 0.266 across alert / low vigilant / drowsy — `phase1_baseline/data/video_features.csv`
-- [ ] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check on age, gender presentation and glasses + blind ITA spot-check
+- [~] 1.1 Demographic annotation pass (skin tone/ITA, age bracket, gender presentation, glasses) + 2nd annotator κ check on age, gender presentation and glasses + blind ITA spot-check. (2026-11-28) Annotator 1 complete for 60 subjects; annotator 2 and the ITA spot-check are still empty, so no κ yet. 28 of 60 subjects have `ita_reliable` False
 - [ ] 1.1 Class/subgroup balance table generated
 - [ ] 1.2 Architecture benchmark: CNN-hybrid vs YOLOv8-based vs ViT/Swin vs LSTM-temporal — `phase1_baseline/results/architecture_benchmark.csv`
 - [ ] 1.2 Baseline architecture selected + justification written
 - [x] 1.3 (2026-11-25) Baseline detector on per-video features: HGB + logistic reference, leave-one-fold-out over the 5 official folds with subject disjointness asserted, 5 seeds, subject-level bootstrap CIs. 3-class HGB 53.5 ± 1.5% accuracy [95% CI 48.0, 59.0], below the published 65.2% and the 57.8% human figure; binary alert-vs-drowsy 81.1 ± 0.6% [74.0, 87.9]. Per-seed rows in `results/detector_runs.csv` (gitignored, on the server) — `phase1_baseline/src/detector.py`
 - [x] 1.3 (2026-11-25) Window-level features (`aggregate --window-s`, alert-video baseline asserted per row, windows under 70% coverage dropped and counted per subject) and window-level detector with majority-vote video accuracy. Sweep 60/30/15/10 s: 3-class HGB video accuracy 62.9 / 61.1 / 57.4 / 58.4%, window macro F1 53.6 / 50.9 / 48.3 / 47.0%. See decision row — `phase1_baseline/results/detector_window_runs.csv`
-- [ ] 1.3 Per-subgroup F1 + bootstrap CIs computed (hook is `detector.subgroup_report`; waits on age_bracket, 5 of 60 filled)
-- [ ] 1.3 Gap metrics computed (max-min F1 gap, std dev, equalized-odds gap)
-- [ ] 1.3 Detection-rate-by-subgroup analysis (tracking failure is itself a fairness finding)
+- [x] 1.3 (2026-11-28) Per-subgroup macro F1 and accuracy with subject-level bootstrap CIs, 60 s 3-class HGB majority votes, 5 seeds pooled, collapse rules fixed beforehand (decision row 2026-11-28). Max-min macro F1 gap: skin tone 11.1 [2.5, 30.5] (Light 65.9 vs Medium 54.9; Dark 62.7), age 9.6 [0.5, 23.5] (18-25 68.7 vs 26+ 59.1), gender presentation 3.9 [0.4, 24.3], glasses 1.7 [0.2, 21.7]. All group CIs overlap; no gap is established at n=60 — `phase1_baseline/results/subgroup_audit.csv` audit batch `20261128T133213Z-dc1b89`, `src/audit.py`
+- [~] 1.3 Gap metrics computed (max-min F1 gap done, see above; std dev and equalized-odds gap not yet)
+- [x] 1.3 (2026-11-28) Detection rate and low-coverage window drops by subgroup. Tracking is ≥ 97.9% in every eligible group; drops concentrate in single subjects: 49 (Medium, 18-25) lost 27 of 85 windows (32%), 30 (18-25) 8 of 62. The two `unknown` skin-tone subjects (26, 30) are also the worst tracked (92.3% detection, 9.2% windows dropped): ITA and landmark tracking fail on the same footage, so this cannot yet be separated from skin tone — `results/subgroup_audit.csv`
 - [ ] Phase 1 deliverable report done
 
 ## Phase 2 — Build the generator
