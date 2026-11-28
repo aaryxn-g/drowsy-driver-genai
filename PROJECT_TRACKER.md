@@ -1,6 +1,6 @@
 # Project Tracker — Synthetic Drowsy-Driver Data Generation & Fatigue Detection
 
-Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-25
+Owner: Aaryan (BITS Pilani Dubai) · Started: 2026-09-21 · Last updated: 2026-11-28
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked
 
@@ -119,6 +119,7 @@ so nothing gets lost between sessions. Each phase folder has its own README with
 | 2026-11-17 | Split recordings (`10_1`, `10_2`) kept as separate videos with a `part` column, not concatenated | Subject 49's halves are 270x480 and 162x288; joining them needs a re-encode that degrades the better half. Per-video features and subject-level folds both handle four videos per subject. See `tests/test_manifest.py::TestSplitRecordings` | Separate parts |
 | 2026-11-04 | Rotation is verified per video rather than left to cv2, and stored size is read with AUTO off | On opencv-python 5.0.0, AUTO defaults on and `CAP_PROP_FRAME_WIDTH` reports the rotated size, so predicting from it with AUTO on swaps twice and rotates again; other builds may ignore AUTO. Checked on MP4s with patched display matrices, no UTA-RLDD file was available | `phase1_baseline/src/video.py` |
 | 2026-11-25 | **Phase 2 clip length: 60 s.** Rule fixed before the sweep: shortest window whose 3-class HGB window macro F1 and majority-vote video accuracy (means over 5 seeds) are both within 2 points of the longest window | 60 s: F1 53.6, video acc 62.9 [95% CI 57.0, 68.3]. 30 s: 50.9 (−2.7, misses), 61.1 (−1.8). 15 s: 48.3, 57.4. 10 s: 47.0, 58.4. Window F1 falls monotonically with shorter windows, so nothing shorter than 60 s passes; the sweep stops at 60 s, so longer clips might do better still. 30 s is the near miss if generator limits force a shorter clip, at a 2.7-point window-F1 cost. Subject-level bootstrap CIs overlap across all four lengths — `phase1_baseline/results/detector_window_runs.csv` batch `20261125T065741Z-04b301` | 60 s |
+| 2026-11-28 | **Subgroup collapse rules for the Phase 1.3 audit, fixed and committed before the audit was first run** (this row and `src/audit.py:COLLAPSE` land in a commit that precedes any `results/subgroup_audit.csv` row). Skin tone: Very light + Light → Light; Intermediate + Tan → Medium; Brown + Dark → Dark; no ITA value → `unknown`, listed, never dropped. Age: 18-25 vs 26+ (26-35, 36-50, 51+); `unsure` its own row. Gender presentation and glasses as annotated, `unsure` its own row. Groups under 3 subjects and `unknown`/`unsure` are listed with their size but kept out of the max-min gap | Collapsing is for statistical power: the six ITA bands hold 7 to 14 subjects each. Sizes in subjects (annotator 1, `data/subgroup_annotations_prefilled.csv`): skin tone Light 15, Medium 17, Dark 26, unknown 2 (subjects 26, 30); age 18-25 15, 26+ 43, unsure 2; gender presentation male 51, female 9; glasses none 48, glasses 9, unsure 3 | Fixed bands |
 
 ## Blockers / Open Questions
 - NTHU-DDD needs the licence **signed by department head or lab director**. Unanswered since the first email. DROZY and NITYMED are the fallbacks for the night-IR stress test; nothing in Phases 1 or 2 depends on NTHU.
